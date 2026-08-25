@@ -1,12 +1,15 @@
 "use client";
 
 import * as React from "react";
+import axios from "axios";
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, Cloud, Eye, EyeOff, KeyRound, ShieldCheck, TriangleAlert, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { awsRegions, mockAwsAccountId } from "@/mock/cloud-account";
-import { useCloudAccountStore } from "@/store/cloud-account-store";
+import { awsRegions } from "@/mock/cloud-account";
+import { connectAwsAccount, disconnectAwsAccount } from "@/services/aws-connection";
+import { useCloudAccountStore, type ConnectionStatus } from "@/store/cloud-account-store";
 import { ConnectionStatusBadge } from "./connection-status";
 
 type FormValues = { alias: string; region: string; accessKeyId: string; secretAccessKey: string };
@@ -16,15 +19,17 @@ const progress = ["Validating configuration", "Establishing secure connection", 
 
 export default function CloudAccountsPage() {
   const { account, connectionStatus, connect, disconnect, setConnectionStatus } = useCloudAccountStore();
+  const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = React.useState(false);
   const [disconnectOpen, setDisconnectOpen] = React.useState(false);
   const [form, setForm] = React.useState<FormValues>(emptyForm);
   const [errors, setErrors] = React.useState<FormErrors>({});
   const [showSecret, setShowSecret] = React.useState(false);
   const [step, setStep] = React.useState(-1);
+  const [connectionError, setConnectionError] = React.useState("");
 
-  const closeForm = () => { if (connectionStatus !== "connecting") { setFormOpen(false); setForm(emptyForm); setErrors({}); setShowSecret(false); } };
-  const update = (field: keyof FormValues, value: string) => { setForm((previous) => ({ ...previous, [field]: value })); setErrors((previous) => ({ ...previous, [field]: undefined })); };
+  const closeForm = () => { if (connectionStatus !== "connecting") { setFormOpen(false); setForm(emptyForm); setErrors({}); setShowSecret(false); setConnectionError(""); } };
+  const update = (field: keyof FormValues, value: string) => { setForm((previous) => ({ ...previous, [field]: value })); setErrors((previous) => ({ ...previous, [field]: undefined })); setConnectionError(""); };
   const validate = () => {
     const next: FormErrors = {};
     if (form.alias.trim().length < 2 || form.alias.trim().length > 60) next.alias = "Enter an account alias between 2 and 60 characters.";
@@ -34,29 +39,62 @@ export default function CloudAccountsPage() {
     setErrors(next);
     return Object.keys(next).length === 0;
   };
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!validate()) return;
-    const safeAccount = { provider: "AWS" as const, accountAlias: form.alias.trim(), region: form.region, accountId: mockAwsAccountId, lastVerified: "Just now" };
-    setForm(emptyForm); // Credentials are cleared immediately and never leave this component.
-    setConnectionStatus("connecting"); setStep(0);
-    window.setTimeout(() => setStep(1), 550);
-    window.setTimeout(() => setStep(2), 1100);
-    window.setTimeout(() => { connect(safeAccount); setStep(-1); setFormOpen(false); }, 1650);
+    const accountAlias = form.alias.trim();
+    const region = form.region;
+    const accessKey = form.accessKeyId.trim();
+    const secretKey = form.secretAccessKey;
+    setForm(emptyForm);
+    setConnectionError("");
+    setConnectionStatus("connecting");
+    setStep(1);
+
+    try {
+      const verifiedAccount = await connectAwsAccount({ accountAlias, accessKey, secretKey, region });
+      connect({ provider: "AWS", accountAlias, region, accountId: verifiedAccount.accountId, arn: verifiedAccount.arn, userId: verifiedAccount.userId, lastVerified: "Just now" }, verifiedAccount.connectionToken);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["aws-connection"] }),
+        queryClient.invalidateQueries({ queryKey: ["aws-resources"], exact: false }),
+        queryClient.invalidateQueries({ queryKey: ["aws-dashboard"], exact: false }),
+        queryClient.invalidateQueries({ queryKey: ["aws-cost-analytics"], exact: false }),
+      ]);
+      setStep(-1);
+      setFormOpen(false);
+    } catch (error) {
+      setConnectionStatus("error");
+      setStep(-1);
+      const message = axios.isAxiosError<{ message?: string }>(error) ? error.response?.data?.message : undefined;
+      setConnectionError(message ?? "Unable to connect to AWS. Please verify your credentials and region.");
+    }
+  };
+
+  const handleDisconnect = async () => {
+    await disconnectAwsAccount();
+    disconnect();
+    setDisconnectOpen(false);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["aws-connection"] }),
+      queryClient.invalidateQueries({ queryKey: ["aws-resources"], exact: false }),
+      queryClient.invalidateQueries({ queryKey: ["aws-dashboard"], exact: false }),
+      queryClient.invalidateQueries({ queryKey: ["aws-cost-analytics"], exact: false }),
+    ]);
   };
 
   return <div className="mx-auto max-w-5xl space-y-8">
     <div><p className="text-sm font-medium text-primary">Integrations</p><h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Cloud Accounts</h1><p className="mt-2 text-sm text-muted-foreground sm:text-base">Connect and manage your cloud provider accounts.</p></div>
-    {!account ? <Card className="overflow-visible"><CardContent className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center"><div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary"><Cloud className="size-6" /></div><h2 className="mt-5 text-xl font-semibold tracking-tight">Connect your AWS account</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Connect AWS to unlock cost analytics, resource insights, forecasting, and AI optimization recommendations.</p><Button className="mt-6 h-10 px-4" onClick={() => setFormOpen(true)}><Cloud className="size-4" />Connect AWS Account</Button><p className="mt-4 text-xs text-muted-foreground">Frontend demo only — no AWS request is made.</p></CardContent></Card> : <ConnectedAccount account={account} onDisconnect={() => setDisconnectOpen(true)} />}
+    {!account && connectionStatus === "restoring" ? <Card><CardContent className="flex min-h-[360px] items-center justify-center text-sm text-muted-foreground"><Cloud className="mr-2 size-4 animate-pulse" />Restoring AWS connection...</CardContent></Card> : !account ? <Card className="overflow-visible"><CardContent className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center"><div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary"><Cloud className="size-6" /></div><h2 className="mt-5 text-xl font-semibold tracking-tight">Connect your AWS account</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Connect AWS to unlock cost analytics, resource insights, forecasting, and AI optimization recommendations.</p><Button className="mt-6 h-10 px-4" onClick={() => { setConnectionError(""); setConnectionStatus("disconnected"); setFormOpen(true); }}><Cloud className="size-4" />Connect AWS Account</Button></CardContent></Card> : <ConnectedAccount account={account} status={connectionStatus} onDisconnect={() => setDisconnectOpen(true)} />}
 
+    {formOpen && connectionError && <div className="fixed inset-x-4 top-4 z-[80] mx-auto max-w-xl rounded-lg border border-destructive/30 bg-popover p-3 text-sm text-destructive shadow-lg"><TriangleAlert className="mr-2 inline size-4" />{connectionError}</div>}
     {formOpen && <ConnectionDialog form={form} errors={errors} status={connectionStatus} step={step} showSecret={showSecret} onClose={closeForm} onSubmit={submit} onUpdate={update} onToggleSecret={() => setShowSecret((value) => !value)} />}
-    {disconnectOpen && <ConfirmDisconnect onCancel={() => setDisconnectOpen(false)} onDisconnect={() => { disconnect(); setDisconnectOpen(false); }} />}
+    {disconnectOpen && <ConfirmDisconnect onCancel={() => setDisconnectOpen(false)} onDisconnect={handleDisconnect} />}
   </div>;
 }
 
-function ConnectedAccount({ account, onDisconnect }: { account: NonNullable<ReturnType<typeof useCloudAccountStore.getState>["account"]>; onDisconnect: () => void }) {
+function ConnectedAccount({ account, status, onDisconnect }: { account: NonNullable<ReturnType<typeof useCloudAccountStore.getState>["account"]>; status: ConnectionStatus; onDisconnect: () => void }) {
   const region = awsRegions.find((item) => item.value === account.region)?.label ?? account.region;
-  return <Card className="overflow-visible"><CardHeader className="flex flex-row items-center justify-between gap-4"><div className="flex items-center gap-3"><div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary"><Cloud className="size-5" /></div><div><CardTitle>AWS</CardTitle><p className="text-xs text-muted-foreground">Cloud provider account</p></div></div><ConnectionStatusBadge status="connected" /></CardHeader><CardContent><div className="grid gap-5 border-y border-border py-5 sm:grid-cols-2 lg:grid-cols-3"><Info label="Account Alias" value={account.accountAlias} /><Info label="AWS Account ID" value={account.accountId} /><Info label="Region" value={region} /><Info label="Account Type" value="AWS Account" /><Info label="Last verified" value={account.lastVerified} /></div><div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2 text-sm text-success"><Check className="size-4" />Successfully connected to AWS</div><div className="flex gap-2"><Button variant="outline">Manage</Button><Button onClick={onDisconnect} variant="destructive">Disconnect</Button></div></div></CardContent></Card>;
+  return <Card className="overflow-visible"><CardHeader className="flex flex-row items-center justify-between gap-4"><div className="flex items-center gap-3"><div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary"><Cloud className="size-5" /></div><div><CardTitle>AWS</CardTitle><p className="text-xs text-muted-foreground">Cloud provider account</p></div></div><ConnectionStatusBadge status={status} /></CardHeader><CardContent><div className="grid gap-5 border-y border-border py-5 sm:grid-cols-2 lg:grid-cols-3"><Info label="Account Alias" value={account.accountAlias} /><Info label="AWS Account ID" value={account.accountId} /><Info label="Region" value={region} /><Info label="ARN" value={account.arn} /><Info label="User ID" value={account.userId} /><Info label="Last verified" value={account.lastVerified} /></div><div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2 text-sm text-success"><Check className="size-4" />Successfully connected to AWS</div><div className="flex gap-2"><Button variant="outline">Manage</Button><Button onClick={onDisconnect} variant="destructive">Disconnect</Button></div></div></CardContent></Card>;
 }
 function Info({ label, value }: { label: string; value: string }) { return <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 text-sm font-medium text-foreground">{value}</p></div>; }
 

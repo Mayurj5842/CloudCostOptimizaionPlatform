@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 const statusConfig = {
   disconnected: { label: "AWS Not Connected", icon: Unplug, className: "text-muted-foreground" },
+  restoring: { label: "Restoring AWS connection", icon: LoaderCircle, className: "text-info" },
   connecting: { label: "Connecting to AWS", icon: LoaderCircle, className: "text-info" },
   connected: { label: "Connected", icon: CheckCircle2, className: "text-success" },
   error: { label: "Connection failed", icon: CircleAlert, className: "text-destructive" },

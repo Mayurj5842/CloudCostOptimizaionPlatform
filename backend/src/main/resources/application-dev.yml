@@ -1,12 +1,12 @@
 spring:
-  devtools:
+  devtoolsv:
     restart:
       enabled: true
 
   datasource:
     url: jdbc:postgresql://localhost:5432/cloudcost_ai
     username: postgres
-    password: postgres 
+    password: root 
 
   jpa:
     hibernate:
@@ -15,6 +15,9 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+  flyway:
+    validate-on-migrate: false
 
 logging:
   level:

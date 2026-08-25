@@ -7,3 +7,22 @@ spring:
 
 server:
   port: 8080
+
+# COST EXPLORER TEMPORARILY DISABLED
+# DO NOT ENABLE UNTIL BILLING ARCHITECTURE IS UPDATED
+# AWS COST EXPLORER API CALL IS DISABLED TO PREVENT ADDITIONAL COST
+billing:
+  sync:
+    enabled: ${AWS_BILLING_IMPORT_ENABLED:false}
+    interval-hours: ${AWS_BILLING_IMPORT_INTERVAL_HOURS:24}
+
+aws:
+  billing:
+    region: ${AWS_BILLING_REGION:us-east-1}
+    s3:
+      bucket: ${AWS_BILLING_S3_BUCKET:}
+      prefix: ${AWS_BILLING_S3_PREFIX:}
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}

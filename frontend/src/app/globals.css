@@ -146,3 +146,45 @@
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+[data-landing-theme="light"] {
+  background: #f4f8fb !important;
+  color: #172033 !important;
+}
+
+[data-landing-theme="light"] nav {
+  background: rgb(244 248 251 / 88%) !important;
+  border-color: #dce3ec !important;
+}
+
+[data-landing-theme="light"] [class*="bg-[#0a1322]"] ,
+[data-landing-theme="light"] [class*="bg-[#0c1727]"] ,
+[data-landing-theme="light"] [class*="bg-[#0d1d2b]"] ,
+[data-landing-theme="light"] [class*="bg-[#091321]"] ,
+[data-landing-theme="light"] [class*="bg-[#101b2d]"] ,
+[data-landing-theme="light"] [class*="bg-[#050a12]"] {
+  background: #ffffff !important;
+}
+
+[data-landing-theme="light"] [class*="bg-white/[0.035]"] ,
+[data-landing-theme="light"] [class*="bg-white/[0.04]"] ,
+[data-landing-theme="light"] [class*="bg-white/[0.07]"] ,
+[data-landing-theme="light"] [class*="bg-white/10]"] {
+  background: #eef4f8 !important;
+}
+
+[data-landing-theme="light"] [class*="border-white"] {
+  border-color: #dce3ec !important;
+}
+
+[data-landing-theme="light"] .text-white { color: #172033 !important; }
+[data-landing-theme="light"] [class*="text-slate-200"],
+[data-landing-theme="light"] [class*="text-slate-300"] { color: #344156 !important; }
+[data-landing-theme="light"] [class*="text-slate-400"] { color: #64748b !important; }
+[data-landing-theme="light"] [class*="text-slate-500"],
+[data-landing-theme="light"] [class*="text-slate-600"],
+[data-landing-theme="light"] [class*="text-slate-700"] { color: #718096 !important; }
+
+[data-landing-theme="light"] [class*="shadow-cyan-950"] {
+  --tw-shadow-color: rgb(8 126 164 / 12%) !important;
+}

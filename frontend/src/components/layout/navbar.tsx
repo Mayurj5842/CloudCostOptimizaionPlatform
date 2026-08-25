@@ -21,7 +21,8 @@ export default function Navbar() {
       {/* Right */}
       <div className="flex items-center gap-4">
         <button aria-label="Search" className="rounded-lg border border-border p-2 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Search className="h-5 w-5 text-muted-foreground" />
+          <
+            Search className="h-5 w-5 text-muted-foreground" />
         </button>
 
         <button aria-label="Notifications" className="rounded-lg border border-border p-2 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

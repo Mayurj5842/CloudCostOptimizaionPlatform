@@ -14,13 +14,13 @@ import {
 } from "lucide-react";
 
 export const navigation = [
-  { title: "Main", items: [{ title: "Overview", href: "/", icon: LayoutDashboard }] },
+  { title: "Main", items: [{ title: "Overview", href: "/dashboard", icon: LayoutDashboard }] },
   {
     title: "Analytics",
     items: [
       { title: "Cost Analytics", href: "/billing", icon: BarChart3 },
       { title: "Resources", href: "/resources", icon: Server },
-      { title: "Forecast", href: "/forecast", icon: Gauge },
+      // { title: "Forecast", href: "/forecast", icon: Gauge },
     ],
   },
   {
