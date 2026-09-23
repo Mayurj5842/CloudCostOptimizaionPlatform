@@ -5,12 +5,12 @@ import {
   CircleHelp,
   CloudCog,
   FileBarChart,
-  Gauge,
   LayoutDashboard,
   Settings,
   Server,
   Sparkles,
   WalletCards,
+  UserCircle2,
 } from "lucide-react";
 
 export const navigation = [
@@ -34,8 +34,9 @@ export const navigation = [
   { title: "Integrations", items: [{ title: "Cloud Accounts", href: "/integrations", icon: CloudCog }] },
   { title: "Reporting", items: [{ title: "Reports", href: "/reports", icon: FileBarChart }] },
   {
-    title: "Other",
+    title: "SYSTEM",
     items: [
+      { title: "Profile", href: "/profile", icon: UserCircle2 },
       { title: "Settings", href: "/settings", icon: Settings },
       { title: "Help & Documentation", href: "/help", icon: CircleHelp },
     ],

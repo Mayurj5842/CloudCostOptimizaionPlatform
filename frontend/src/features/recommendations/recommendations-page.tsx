@@ -10,21 +10,27 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchAwsRecommendations, generateAwsRecommendations, updateAwsRecommendationStatus, type AwsRecommendation } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
+import { useMonthSelectionStore } from "@/store/month-selection-store";
+import { MonthSelector } from "@/components/month-selector";
 
-const priorityStyle = { High: "destructive", Medium: "warning", Low: "success" } as const;
-const statusStyle = { New: "info", Applied: "success", Dismissed: "outline" } as const;
+const priorityStyle = { High: "destructive", Medium: "warning", Low: "success", HIGH: "destructive", MEDIUM: "warning", LOW: "success" } as const;
+const statusStyle = { New: "info", Applied: "success", Dismissed: "outline", NEW: "info", REVIEWED: "success", DISMISSED: "outline" } as const;
 
-export default function RecommendationsPage({ compact = false }: { compact?: boolean }) {
+export default function RecommendationsPage({ compact = false, month }: { compact?: boolean; month?: string }) {
   const { account, connectionToken } = useCloudAccountStore();
+  const storedMonth = useMonthSelectionStore((state) => state.selectedMonth);
+  const selectedMonth = month ?? storedMonth;
+  const setSelectedMonth = useMonthSelectionStore((state) => state.setSelectedMonth);
   const queryClient = useQueryClient();
   const [priority, setPriority] = useState("All");
   const [service, setService] = useState("All");
   const [region, setRegion] = useState("All");
   const [category, setCategory] = useState("All");
   const [status, setStatus] = useState("All");
-  const query = useQuery({ queryKey: ["aws-recommendations", account?.accountId, connectionToken], queryFn: () => fetchAwsRecommendations(connectionToken as string), enabled: Boolean(connectionToken), staleTime: 5 * 60 * 1000, retry: false });
-  const mutation = useMutation({ mutationFn: ({ id, value }: { id: string; value: AwsRecommendation["status"] }) => updateAwsRecommendationStatus(connectionToken as string, id, value), onSuccess: (data) => queryClient.setQueryData(["aws-recommendations", account?.accountId, connectionToken], data) });
-  const generateMutation = useMutation({ mutationFn: () => generateAwsRecommendations(connectionToken as string), onSuccess: (data) => queryClient.setQueryData(["aws-recommendations", account?.accountId, connectionToken], data) });
+  const queryKey = ["aws-recommendations", account?.accountId, connectionToken, selectedMonth];
+  const query = useQuery({ queryKey, queryFn: () => fetchAwsRecommendations(connectionToken as string, selectedMonth), enabled: Boolean(connectionToken), staleTime: 5 * 60 * 1000, retry: false });
+  const mutation = useMutation({ mutationFn: ({ id, value }: { id: string; value: AwsRecommendation["status"] }) => updateAwsRecommendationStatus(connectionToken as string, id, value, selectedMonth), onSuccess: (data) => queryClient.setQueryData(queryKey, data) });
+  const generateMutation = useMutation({ mutationFn: () => generateAwsRecommendations(connectionToken as string, selectedMonth), onSuccess: (data) => queryClient.setQueryData(queryKey, data) });
 
   if (!account || !connectionToken) return <Card><CardContent className="flex min-h-[280px] flex-col items-center justify-center text-center"><Lightbulb className="size-9 text-primary" /><p className="mt-4 font-medium">Connect an AWS account first</p><p className="mt-2 text-sm text-muted-foreground">Recommendations use imported CUR 2.0 costs and AWS resource data.</p></CardContent></Card>;
   if (query.isLoading) return <Card><CardContent className="flex min-h-[220px] items-center justify-center text-sm text-muted-foreground"><LoaderCircle className="mr-2 size-4 animate-spin" />Analyzing AWS cost data...</CardContent></Card>;
@@ -34,10 +40,10 @@ export default function RecommendationsPage({ compact = false }: { compact?: boo
   const filtered = all.filter((item) => (priority === "All" || item.priority === priority) && (service === "All" || item.service === service) && (region === "All" || item.region === region) && (category === "All" || item.category === category) && (status === "All" || item.status === status));
   const visible = compact ? filtered.slice(0, 4) : filtered;
   return <div className={compact ? "space-y-4" : "mx-auto max-w-7xl space-y-8"}>
-    {!compact && <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-medium text-primary">Optimization</p><h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Recommendations</h1><p className="mt-2 text-sm text-muted-foreground">Actionable findings generated from stored PostgreSQL billing data.</p></div><Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending}>{generateMutation.isPending ? "Analyzing stored data..." : "Generate recommendations"}</Button></header>}
+    {!compact && <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-medium text-primary">Optimization</p><h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Recommendations</h1><p className="mt-2 text-sm text-muted-foreground">Actionable findings generated from stored PostgreSQL billing data.</p></div><div className="flex flex-wrap items-center gap-3"><MonthSelector value={selectedMonth} onChange={setSelectedMonth} /><Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending}>{generateMutation.isPending ? "Analyzing stored data..." : "Generate recommendations"}</Button></div></header>}
     <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="flex items-center gap-2"><Lightbulb className="size-5 text-warning" />{compact ? "AI Recommendations" : "AWS cost recommendations"}</CardTitle><Badge variant="secondary">{all.length} findings</Badge></CardHeader><CardContent>
       {!compact && <><div className="mb-5 grid gap-3 sm:grid-cols-4"><Summary label="Total" value={all.length} /><Summary label="High priority" value={all.filter((item) => item.priority === "High").length} /><Summary label="Medium priority" value={all.filter((item) => item.priority === "Medium").length} /><Summary label="Low priority" value={all.filter((item) => item.priority === "Low").length} /></div><div className="mb-5 flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-3 sm:flex-row sm:flex-wrap"><Filter label="Service" value={service} options={["All", ...new Set(all.map((item) => item.service))]} onChange={setService} /><Filter label="Region" value={region} options={["All", ...new Set(all.map((item) => item.region))]} onChange={setRegion} /><Filter label="Severity" value={priority} options={["All", "High", "Medium", "Low"]} onChange={setPriority} /><Filter label="Category" value={category} options={["All", ...new Set(all.map((item) => item.category))]} onChange={setCategory} /><Filter label="Status" value={status} options={["All", "New", "Applied", "Dismissed"]} onChange={setStatus} /></div></>}
-      {visible.length === 0 ? <div className="py-12 text-center"><CheckCircle2 className="mx-auto size-8 text-success" /><p className="mt-3 text-sm font-medium">No recommendations match these filters</p><p className="mt-1 text-sm text-muted-foreground">Recommendations appear when imported data supports an action.</p></div> : <div className="space-y-4">{visible.map((item) => <RecommendationCard currency={query.data?.currency ?? "USD"} item={item} key={item.id} onStatus={(value) => mutation.mutate({ id: item.id, value })} />)}</div>}
+      {query.data?.status === "NO_DATA" ? <div className="py-12 text-center"><CheckCircle2 className="mx-auto size-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">No CUR billing data is available for {selectedMonth}</p><p className="mt-1 text-sm text-muted-foreground">Recommendations are not generated without real billing data.</p></div> : visible.length === 0 ? <div className="py-12 text-center"><CheckCircle2 className="mx-auto size-8 text-success" /><p className="mt-3 text-sm font-medium">No recommendations match these filters</p><p className="mt-1 text-sm text-muted-foreground">Recommendations appear when imported data supports an action.</p></div> : <div className="space-y-4">{visible.map((item) => <RecommendationCard currency={query.data?.currency ?? "USD"} item={item} key={item.id} onStatus={(value) => mutation.mutate({ id: item.id, value })} />)}</div>}
       {compact && all.length > visible.length && <Button asChild className="mt-5 w-full" variant="outline"><Link href="/recommendations">View all recommendations</Link></Button>}
     </CardContent></Card>
   </div>;

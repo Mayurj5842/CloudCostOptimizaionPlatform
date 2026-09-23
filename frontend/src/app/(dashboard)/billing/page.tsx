@@ -5,7 +5,7 @@ import Link from "next/link";
 import ReactECharts from "echarts-for-react";
 import { AlertTriangle, BarChart3, CalendarDays, RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/providers/theme-provider";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,19 +13,13 @@ import { getChartTheme } from "@/lib/chart-theme";
 import { fetchAwsCostAnalytics, type AwsCostAnalyticsResponse } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
 
-const periods = [
-  { value: "CURRENT_MONTH", label: "Current month" },
-  { value: "PREVIOUS_MONTH", label: "Previous month" },
-  { value: "LAST_30_DAYS", label: "Last 30 days" },
-];
-
 export default function BillingPage() {
   const { resolvedTheme } = useTheme();
-  const [period, setPeriod] = React.useState("CURRENT_MONTH");
+  const [month, setMonth] = React.useState(() => new Date().toISOString().slice(0, 7));
   const { account, connectionToken } = useCloudAccountStore();
   const analytics = useQuery({
-    queryKey: ["aws-cost-analytics", account?.accountId, connectionToken, period],
-    queryFn: () => fetchAwsCostAnalytics(connectionToken as string, period),
+    queryKey: ["aws-cost-analytics", account?.accountId, connectionToken, month],
+    queryFn: () => fetchAwsCostAnalytics(connectionToken as string, "CURRENT_MONTH", month),
     enabled: Boolean(connectionToken),
     staleTime: 5 * 60 * 1000,
     retry: false,
@@ -49,7 +43,7 @@ export default function BillingPage() {
           <Link href="/billing" className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-foreground hover:bg-accent/10">Analytics</Link>
           <Link href="/billing/bills" className="inline-flex items-center justify-center border-l border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-accent/10">Bills</Link>
         </div>
-        <label className="flex items-center gap-2 text-sm"><CalendarDays className="size-4 text-muted-foreground" /><span className="sr-only">Reporting period</span><select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" onChange={(event) => setPeriod(event.target.value)} value={period}>{periods.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label className="flex items-center gap-2 text-sm"><CalendarDays className="size-4 text-muted-foreground" /><span className="sr-only">Billing month</span><input aria-label="Billing month" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
       </div>
     </header>
     {analytics.isLoading && <LoadingState />}
@@ -67,13 +61,13 @@ function AnalyticsReport({ data, resolvedTheme }: { data: AwsCostAnalyticsRespon
   }
   
   return <>
-    <p className="text-xs text-muted-foreground">Latest AWS billing data available for {data.period.start} through {data.period.end}.</p>
+    <p className="text-xs text-muted-foreground">Latest AWS billing data from {data.dataSource ?? "AWS CUR 2.0 / PostgreSQL"} for {data.period.start} through {data.period.end}. {data.lastUpdated ? `Last updated: ${new Date(data.lastUpdated).toLocaleString()}.` : "Last updated: Unavailable."} Status: {data.dataStatus}.</p>
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{[
-      ["Total", format(data.summary.totalCost)], ["This Month", format(data.summary.thisMonth)], ["Daily Avg", format(data.summary.dailyAverage)], ["Forecast", format(data.summary.forecast)], ["Savings", data.summary.savings == null ? "No savings data" : format(data.summary.savings)],
+      ["Total", format(data.summary.totalCost)], ["Previous period", format(data.summary.previousPeriodCost)], ["Difference", format(data.summary.difference)], ["Change", data.summary.percentageChange == null ? "Unavailable" : `${data.summary.percentageChange}%`], ["Daily average", format(data.summary.dailyAverage)],
     ].map(([label, value]) => <Card key={label}><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></CardContent></Card>)}</section>
     <div className="grid gap-6 xl:grid-cols-2"><TrendChart data={data} resolvedTheme={resolvedTheme} /><BreakdownCard title="Cost by AWS Service" items={data.serviceCosts} currency={data.currency} /><BreakdownCard title="Cost by Region" items={data.regionCosts} currency={data.currency} /></div>
     <div className="grid gap-6 xl:grid-cols-2"><DriversCard data={data} /><AnomaliesCard data={data} /></div>
-    {/* <div className="grid gap-6 xl:grid-cols-2"><BudgetCard data={data} /><Card><CardHeader><CardTitle>Potential Savings</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{data.potentialSavings.available && data.potentialSavings.monthlySavings != null ? `${format(data.potentialSavings.monthlySavings)} / month` : "No recommendations available"}</p></CardContent></Card></div> */}
+    <div className="grid gap-6 xl:grid-cols-2"><BudgetCard data={data} /><Card><CardHeader><CardTitle>Potential Savings</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{data.potentialSavings.available && data.potentialSavings.monthlySavings != null ? `${format(data.potentialSavings.monthlySavings)} / month` : "No recommendations available"}</p></CardContent></Card></div>
   </>;
 }
 
@@ -215,5 +209,6 @@ function AnomaliesCard({ data }: { data: AwsCostAnalyticsResponse }) {
 // }
 
 function LoadingState() { return <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{["Total", "This Month", "Daily Avg", "Forecast", "Savings"].map(label => <Card key={label}><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold">Loading...</p></CardContent></Card>)}</section>; }
-function ErrorState({ onRetry }: { onRetry: () => void }) { return <Card><CardContent className="flex min-h-[280px] flex-col items-center justify-center text-center"><p className="font-medium text-destructive">Unable to load AWS cost data.</p><p className="mt-2 text-sm text-muted-foreground">Please verify your AWS permissions and Cost Explorer access.</p><Button className="mt-5" onClick={onRetry} variant="outline"><RefreshCw className="size-4" />Retry</Button></CardContent></Card>; }
+function BudgetCard({ data }: { data: AwsCostAnalyticsResponse }) { const budget = data.budget; return <Card><CardHeader><CardTitle>Budget Usage</CardTitle></CardHeader><CardContent>{!budget.configured ? <p className="text-sm text-muted-foreground">No budget configured</p> : <div className="space-y-2"><p className="text-2xl font-semibold">{budget.usagePercentage == null ? "Unavailable" : `${budget.usagePercentage}%`}</p><p className="text-sm text-muted-foreground">{budget.actualSpend == null ? "No CUR data available" : `${formatCurrency(budget.actualSpend, budget.currency)} of ${formatCurrency(budget.limit ?? 0, budget.currency)}`}</p></div>}</CardContent></Card>; }
+function ErrorState({ onRetry }: { onRetry: () => void }) { return <Card><CardContent className="flex min-h-[280px] flex-col items-center justify-center text-center"><p className="font-medium text-destructive">Unable to load AWS CUR billing data.</p><p className="mt-2 text-sm text-muted-foreground">Please retry after confirming the CUR import and PostgreSQL billing data are available.</p><Button className="mt-5" onClick={onRetry} variant="outline"><RefreshCw className="size-4" />Retry</Button></CardContent></Card>; }
 function formatCurrency(value: number, currency: string) { return new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 2 }).format(value); }

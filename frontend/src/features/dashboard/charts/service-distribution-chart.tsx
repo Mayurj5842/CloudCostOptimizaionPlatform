@@ -1,7 +1,7 @@
 "use client";
 
 import ReactECharts from "echarts-for-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/providers/theme-provider";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -15,11 +15,11 @@ import { getChartTheme } from "@/lib/chart-theme";
 import { fetchAwsServiceDistribution } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
 
-export default function ServiceDistributionChart({ range }: { range: string }) {
+export default function ServiceDistributionChart({ range, month }: { range: string; month: string }) {
   const { resolvedTheme } = useTheme();
   const colors = typeof document === "undefined" ? null : getChartTheme();
   const connectionToken = useCloudAccountStore((state) => state.connectionToken);
-  const distribution = useQuery({ queryKey: ["aws-service-distribution", connectionToken, range], queryFn: () => fetchAwsServiceDistribution(connectionToken as string, range), enabled: Boolean(connectionToken), retry: false });
+  const distribution = useQuery({ queryKey: ["aws-service-distribution", connectionToken, range, month], queryFn: () => fetchAwsServiceDistribution(connectionToken as string, range, month), enabled: Boolean(connectionToken), retry: false, placeholderData: (previous) => previous });
   const serviceDistribution = distribution.data?.services ?? [];
   const currency = distribution.data?.currency ?? "USD";
   const option = {
@@ -79,7 +79,7 @@ export default function ServiceDistributionChart({ range }: { range: string }) {
 
       <CardContent>
         {distribution.isLoading && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading cost data...</p>}
-        {distribution.isError && <div className="flex h-[320px] flex-col items-center justify-center gap-3 text-sm text-destructive"><p>Unable to load cost data.</p><button type="button" className="rounded-lg border border-border px-3 py-1 text-foreground" onClick={() => distribution.refetch()}>Try again</button></div>}
+        {distribution.isError && !distribution.data && <div className="flex h-[320px] flex-col items-center justify-center gap-3 text-sm text-destructive"><p>Unable to load cost data.</p><button type="button" className="rounded-lg border border-border px-3 py-1 text-foreground" onClick={() => distribution.refetch()}>Try again</button></div>}
         {distribution.isSuccess && serviceDistribution.length === 0 && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No billing data available for the selected period.</p>}
         {distribution.isSuccess && serviceDistribution.length > 0 && <ReactECharts
           key={resolvedTheme}

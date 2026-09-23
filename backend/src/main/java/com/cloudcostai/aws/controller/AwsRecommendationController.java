@@ -24,24 +24,27 @@ public class AwsRecommendationController {
 
     @GetMapping("/recommendations")
     public ResponseEntity<ApiResponse<AwsRecommendationResponse>> recommendations(
-            @RequestHeader("X-AWS-Connection-Token") String connectionToken) {
+            @RequestHeader("X-AWS-Connection-Token") String connectionToken,
+            @RequestParam(required = false) String month) {
         return ResponseEntity.ok(new ApiResponse<>(true, "AWS recommendations generated successfully",
-                recommendationService.getRecommendations(connectionToken)));
+                recommendationService.getRecommendations(connectionToken, month)));
     }
 
     @PostMapping("/recommendations/generate")
     public ResponseEntity<ApiResponse<AwsRecommendationResponse>> generate(
-            @RequestHeader("X-AWS-Connection-Token") String connectionToken) {
+            @RequestHeader("X-AWS-Connection-Token") String connectionToken,
+            @RequestParam(required = false) String month) {
         return ResponseEntity.ok(new ApiResponse<>(true, "Recommendations generated from PostgreSQL billing data",
-                recommendationService.generateRecommendations(connectionToken)));
+                recommendationService.generateRecommendations(connectionToken, month)));
     }
 
     @PutMapping("/recommendations/{recommendationId}/status")
     public ResponseEntity<ApiResponse<AwsRecommendationResponse>> status(
             @RequestHeader("X-AWS-Connection-Token") String connectionToken,
             @PathVariable String recommendationId,
-            @RequestParam String value) {
+            @RequestParam String value,
+            @RequestParam(required = false) String month) {
         return ResponseEntity.ok(new ApiResponse<>(true, "Recommendation status updated",
-                recommendationService.updateStatus(connectionToken, recommendationId, value)));
+                recommendationService.updateStatus(connectionToken, recommendationId, value, month)));
     }
 }

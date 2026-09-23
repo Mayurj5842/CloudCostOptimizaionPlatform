@@ -15,7 +15,7 @@ export type CloudAccount = {
   lastVerified: string;
 };
 
-type CloudAccountState = {
+export type CloudAccountState = {
   connectionStatus: ConnectionStatus;
   account: CloudAccount | null;
   connectionToken: string | null;

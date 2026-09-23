@@ -2,6 +2,7 @@ package com.cloudcostai.aws.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import java.time.ZoneId;
 
 @Component
 public class AwsBillingSyncProperties {
@@ -41,4 +42,6 @@ public class AwsBillingSyncProperties {
     public String getPrefix() { return prefix; }
 
     public String getRegion() { return region; }
+
+    public ZoneId getTimeZone() { return ZoneId.systemDefault(); }
 }

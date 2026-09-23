@@ -2,6 +2,7 @@ package com.cloudcostai.aws.controller;
 
 import com.cloudcostai.aws.dto.request.AwsConnectionRequest;
 import com.cloudcostai.aws.dto.response.AwsConnectionResponse;
+import com.cloudcostai.aws.dto.response.AwsConnectionTestResponse;
 import com.cloudcostai.aws.service.AwsConnectionService;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.model.AwsAccount;
@@ -31,31 +32,35 @@ public class AwsConnectionController {
     public ResponseEntity<ApiResponse<AwsConnectionResponse>> connect(
             @Valid @RequestBody AwsConnectionRequest request
     ) {
+        // Trim all inputs to ensure no whitespace issues
+        String trimmedAccessKey = request.accessKey().trim();
+        String trimmedSecretKey = request.secretKey().trim();
+        String trimmedRegion = request.region().trim();
 
         var identity = awsConnectionService.verifyConnection(
-                request.accessKey(),
-                request.secretKey(),
-                request.region()
+                trimmedAccessKey,
+                trimmedSecretKey,
+                trimmedRegion
         );
 
         AwsAccount account = awsAccountRepository
                 .findByUserIdAndProvider(identity.userId(), "AWS")
                 .orElseGet(() -> new AwsAccount(
-                        identity.userId(), request.accountAlias(), request.region(), identity.accountId(),
+                        identity.userId(), request.accountAlias(), trimmedRegion, identity.accountId(),
                         identity.arn(), "AWS", "CONNECTED"));
-        account.markConnected(request.accountAlias(), request.region(), identity.accountId(), identity.arn());
+        account.markConnected(request.accountAlias(), trimmedRegion, identity.accountId(), identity.arn());
         awsAccountRepository.save(account);
 
         // Invalidate any existing active session for this AWS account before creating a new one.
         sessionService.invalidateByAccountId(identity.accountId());
         String connectionToken = sessionService.createSession(
-                request.accessKey(), request.secretKey(), request.region(), identity);
+                trimmedAccessKey, trimmedSecretKey, trimmedRegion, identity);
 
         AwsConnectionResponse response = new AwsConnectionResponse(
                 identity.accountId(),
                 identity.arn(),
                 identity.userId(),
-                request.region(),
+                trimmedRegion,
                 "CONNECTED",
                 request.accountAlias(),
                 "AWS",
@@ -72,6 +77,15 @@ public class AwsConnectionController {
         return ResponseEntity.ok(apiResponse);
     }
 
+        @GetMapping("/connection/test")
+        public ResponseEntity<ApiResponse<AwsConnectionTestResponse>> testConnection(
+                        @RequestHeader("X-AWS-Connection-Token") String connectionToken) {
+                var session = sessionService.getSession(connectionToken);
+                return ResponseEntity.ok(new ApiResponse<>(true, "AWS connection is active",
+                                new AwsConnectionTestResponse(session.accountId(), session.region(), "HEALTHY",
+                                                "The existing AWS session is valid.")));
+        }
+
         @GetMapping("/connection")
         public ResponseEntity<ApiResponse<AwsConnectionResponse>> getConnection() {
                 var account = awsAccountRepository
@@ -83,9 +97,7 @@ public class AwsConnectionController {
                 AwsAccount connectedAccount = account.get();
                 String connectionToken = sessionService.findTokenByAccountId(connectedAccount.getAccountId()).orElse(null);
             if (connectionToken == null) {
-                    // The database still marks this AWS account as connected, but the session has expired or was removed.
-                    connectedAccount.markDisconnected();
-                    awsAccountRepository.save(connectedAccount);
+                            // A missing session is not an explicit user disconnect.
                     return ResponseEntity.ok(new ApiResponse<>(true, "No AWS account is connected", null));
             }
 

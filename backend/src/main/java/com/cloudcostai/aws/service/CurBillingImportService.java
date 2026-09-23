@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class CurBillingImportService {
@@ -81,6 +82,10 @@ public class CurBillingImportService {
         else summary.update(total, currency, false, LocalDateTime.now());
         logger.info("CUR import completed for account={} totalCost={}", accountId, total);
         return summaryRepository.save(summary);
+    }
+
+    public Optional<AwsBillingSummary> importLatestIfNewer(String accessKey, String secretKey, String accountId) {
+        return Optional.of(importLatest(accessKey, secretKey, accountId));
     }
 
     private String first(Map<String, String> values, String... keys) {

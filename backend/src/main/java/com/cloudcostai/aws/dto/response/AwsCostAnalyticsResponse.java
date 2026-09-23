@@ -16,12 +16,18 @@ public record AwsCostAnalyticsResponse(
         List<CostAnomaly> anomalies,
         Budget budget,
         PotentialSavings potentialSavings,
-        String dataStatus
+        String dataStatus,
+        String dataSource,
+        String billingPeriodStart,
+        String billingPeriodEnd,
+        String lastUpdated,
+        String message
 ) {
     public record Period(String start, String end) {}
 
     public record Summary(BigDecimal totalCost, BigDecimal thisMonth, BigDecimal dailyAverage,
-                          BigDecimal forecast, BigDecimal savings) {}
+                          BigDecimal forecast, BigDecimal savings, BigDecimal previousPeriodCost,
+                          BigDecimal difference, BigDecimal percentageChange) {}
 
     public record CostPoint(String date, BigDecimal cost) {}
 

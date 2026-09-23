@@ -57,6 +57,9 @@ public class AwsRecommendation {
     @Column(nullable = false)
     private String status;
 
+    @Column(name = "billing_month")
+    private String billingMonth;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -67,17 +70,32 @@ public class AwsRecommendation {
                              String severity, String service, String resourceId, String region,
                              BigDecimal currentCost, String reason, String recommendation, String action,
                              BigDecimal potentialSavings, String status) {
+                    this(awsAccountId, recommendationKey, title, category, severity, service, resourceId, region, currentCost,
+                        reason, recommendation, action, potentialSavings, status, null);
+                    }
+
+                    public AwsRecommendation(String awsAccountId, String recommendationKey, String title, String category,
+                                 String severity, String service, String resourceId, String region,
+                                 BigDecimal currentCost, String reason, String recommendation, String action,
+                                 BigDecimal potentialSavings, String status, String billingMonth) {
         this.id = UUID.randomUUID();
         this.awsAccountId = awsAccountId;
         this.recommendationKey = recommendationKey;
         this.createdAt = LocalDateTime.now();
         update(title, category, severity, service, resourceId, region, currentCost, reason, recommendation,
-                action, potentialSavings, status);
+                        action, potentialSavings, status, billingMonth);
     }
 
     public void update(String title, String category, String severity, String service, String resourceId,
                        String region, BigDecimal currentCost, String reason, String recommendation,
                        String action, BigDecimal potentialSavings, String status) {
+                update(title, category, severity, service, resourceId, region, currentCost, reason, recommendation,
+                    action, potentialSavings, status, this.billingMonth);
+                }
+
+                public void update(String title, String category, String severity, String service, String resourceId,
+                           String region, BigDecimal currentCost, String reason, String recommendation,
+                           String action, BigDecimal potentialSavings, String status, String billingMonth) {
         this.title = title;
         this.category = category;
         this.severity = severity;
@@ -90,6 +108,7 @@ public class AwsRecommendation {
         this.action = action;
         this.potentialSavings = potentialSavings;
         this.status = status;
+        this.billingMonth = billingMonth;
     }
 
     public UUID getId() { return id; }
@@ -107,5 +126,6 @@ public class AwsRecommendation {
     public String getAction() { return action; }
     public BigDecimal getPotentialSavings() { return potentialSavings; }
     public String getStatus() { return status; }
+    public String getBillingMonth() { return billingMonth; }
     public LocalDateTime getCreatedAt() { return createdAt; }
 }

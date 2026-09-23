@@ -10,8 +10,8 @@ import { useQuery } from "@tanstack/react-query";
 
 const icons = [DollarSign, Server, PiggyBank, Wallet] as const;
 
-export default function StatsGrid() {
-  const dashboard = useAwsDashboard();
+export default function StatsGrid({ month }: { month: string }) {
+  const dashboard = useAwsDashboard(month);
   const connectionToken = useCloudAccountStore((state) => state.connectionToken);
   const [isResourcesOpen, setIsResourcesOpen] = useState(false);
   const resources = useQuery({
@@ -42,7 +42,7 @@ export default function StatsGrid() {
     },
     {
       title: "Budget Usage",
-      value: data?.budgetUsage?.configured && data.budgetUsage.usagePercentage != null ? `${data.budgetUsage.usagePercentage}%` : data ? "No budget" : dashboard.isError ? "Unavailable" : "Loading...",
+      value: data?.budgetUsage?.configured ? (data.budgetUsage.usagePercentage == null ? "Unavailable" : `${data.budgetUsage.usagePercentage}%`) : data ? "No budget configured" : dashboard.isError ? "Unavailable" : "Loading...",
       change: data?.budgetUsage?.configured ? budgetStatus(data.budgetUsage.status) : "",
       description: "Current monthly budget",
     },
@@ -81,9 +81,9 @@ function ActiveResourcesDialog({
   onClose: () => void;
 }) {
   const data = resources.data;
-  const activeEc2 = data?.ec2Instances.filter((item) => item.state.toLowerCase() === "running") ?? [];
-  const activeRds = data?.rdsDatabases.filter((item) => item.status.toLowerCase() === "available") ?? [];
-  const activeCount = activeEc2.length + activeRds.length + (data?.lambdaFunctions.length ?? 0) + (data?.s3Buckets.length ?? 0);
+  const activeEc2 = data?.ec2Instances.filter((item) => item.state?.toLowerCase() === "running") ?? [];
+  const activeRds = data?.rdsDatabases.filter((item) => item.status?.toLowerCase() === "available") ?? [];
+  const activeCount = data?.summary.activeResources ?? 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4" onClick={onClose}>
@@ -109,6 +109,9 @@ function ActiveResourcesDialog({
           <ActiveResourceGroup title="RDS" count={activeRds.length} items={activeRds.map((item) => ({ name: `${item.engine} database`, details: [`DB identifier: ${item.identifier}`, `Region: ${item.region}`] }))} />
           <ActiveResourceGroup title="Lambda" count={data.lambdaFunctions.length} items={data.lambdaFunctions.map((item) => ({ name: "Active Lambda function", details: [`Function: ${item.functionName}`, `Region: ${item.region}`] }))} />
           <ActiveResourceGroup title="S3" count={data.s3Buckets.length} items={data.s3Buckets.map((item) => ({ name: "Active S3 bucket", details: [`Bucket: ${item.bucketName}`, `Region: ${item.region}`] }))} />
+          <ActiveResourceGroup title="EBS" count={data.ebsVolumes.length} items={data.ebsVolumes.map((item) => ({ name: `${item.volumeType} volume`, details: [`Volume ID: ${item.volumeId}`, `${item.size} GiB`, item.attachedInstanceId ? `Attached to: ${item.attachedInstanceId}` : "Unattached"] }))} />
+          <ActiveResourceGroup title="VPC" count={data.vpcs.length} items={data.vpcs.map((item) => ({ name: item.vpcId, details: [`CIDR: ${item.cidrBlock}`, `State: ${item.state}`, `Region: ${item.region}`] }))} />
+          <ActiveResourceGroup title="Security groups" count={data.securityGroups.length} items={data.securityGroups.map((item) => ({ name: item.groupName || item.groupId, details: [`Group ID: ${item.groupId}`, `VPC: ${item.vpcId || "None"}`] }))} />
         </div>}
       </div>
     </div>

@@ -25,7 +25,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useState } from "react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/providers/theme-provider";
 
 const features = [
   { icon: BarChart3, title: "Cost analytics", text: "See spend by service, region, and billing period in one focused view." },
@@ -84,7 +84,106 @@ export default function LandingPage() {
 
     <section className="mx-auto max-w-7xl px-5 pb-28 sm:px-8"><div className="relative overflow-hidden rounded-2xl border border-cyan-300/20 bg-[#0d1d2b] px-6 py-12 text-center sm:px-12"><div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(103,232,249,0.16),transparent_55%)]" /><div className="relative"><p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">Start with clarity</p><h2 className="mx-auto mt-4 max-w-2xl text-3xl font-semibold tracking-[-0.04em] text-white sm:text-5xl">Take control of your cloud costs.</h2><p className="mx-auto mt-4 max-w-xl text-base leading-7 text-slate-400">Connect your cloud infrastructure, understand your spending, and make smarter optimization decisions with CloudCostAI.</p><div className="mt-8 flex flex-wrap justify-center gap-3"><Link href="/dashboard" className="inline-flex items-center gap-2 rounded-lg bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200">Go to dashboard <ArrowRight className="size-4" /></Link><Link href="/login" className="rounded-lg border border-white/15 px-5 py-3 text-sm font-medium text-white hover:bg-white/5">Login</Link></div></div></div></section>
 
-    <footer className="border-t border-white/[0.08] bg-[#050a12]"><div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-10 sm:px-8 md:flex-row md:items-start md:justify-between"><div><Logo /><p className="mt-4 max-w-xs text-sm leading-6 text-slate-600">Intelligent visibility for better cloud cost decisions.</p></div><div className="grid grid-cols-2 gap-x-12 gap-y-3 text-sm text-slate-500"><a href="#features" className="hover:text-white">Features</a><a href="#technology" className="hover:text-white">Technology</a><a href="#architecture" className="hover:text-white">Architecture</a><Link href="/dashboard" className="hover:text-white">Dashboard</Link><Link href="/login" className="hover:text-white">Login</Link><a href="#overview" className="hover:text-white">About</a></div></div><div className="mx-auto max-w-7xl border-t border-white/[0.06] px-5 py-5 text-xs text-slate-700 sm:px-8">© 2026 CloudCostAI. Built for thoughtful cloud operations.</div></footer>
+    <footer className="border-t border-white/[0.08] bg-[#050a12]"><div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-10 sm:px-8 md:flex-row md:items-start md:justify-between"><div><Logo /><p className="mt-4 max-w-xs text-sm leading-6 text-slate-600">Intelligent visibility for better cloud cost decisions.</p></div><div className="grid grid-cols-2 gap-x-12 gap-y-3 text-sm text-slate-500"><a href="#features" className="hover:text-white">Features</a><a href="#technology" className="hover:text-white">Technology</a><a href="#architecture" className="hover:text-white">Architecture</a><Link href="/dashboard" className="hover:text-white">Dashboard</Link><Link href="/login" className="hover:text-white">Login</Link><a href="#overview" className="hover:text-white">About</a></div></div><div className="mx-auto max-w-7xl border-t border-white/[0.06] px-5 py-5 text-xs text-slate-700 sm:px-8">© Audit and fix the CloudCostAI Dashboard end-to-end.
+
+IMPORTANT:
+
+* Work ONLY on the Dashboard module and the APIs/services directly required by the Dashboard.
+* Do NOT add new features.
+* Do NOT change AWS authentication/session architecture.
+* Do NOT use AWS Cost Explorer anywhere.
+* Do NOT modify AI Insights, Reports, Budgets, Alerts, or unrelated modules unless a Dashboard API dependency must be fixed.
+* Do NOT use mock/fake billing data.
+
+First inspect the current frontend Dashboard components, API calls, backend Dashboard controller/service/repository, AWS resource services, CUR billing/PostgreSQL flow, and existing tests.
+
+Then verify every Dashboard section:
+
+1. Total Cloud Spend
+
+   * Show the correct current selected-month AWS cost from CUR/PostgreSQL.
+   * Show previous-month comparison when data exists.
+   * Never silently show 0 when data is unavailable.
+   * Clearly show NO_DATA / UNAVAILABLE state when appropriate.
+
+2. Active Resources
+
+   * Fetch real AWS resources.
+   * Correctly display EC2, S3, RDS, Lambda, EBS, VPC and Security Groups.
+   * Clicking the card/stat should open the correct resource list/type.
+
+3. Estimated Savings
+
+   * Use only existing real recommendation data.
+   * If recommendations are unavailable, show a proper unavailable state instead of fake savings.
+
+4. Budget Usage
+
+   * Use real stored budget data if configured.
+   * Correctly calculate used amount and percentage.
+   * If no budget exists, clearly show "No budget configured".
+
+5. Cloud Cost Trend
+
+   * Use CUR/PostgreSQL billing data.
+   * Respect the selected month/date range.
+   * Correctly aggregate daily/monthly costs.
+   * Handle missing CUR data gracefully.
+
+6. Service Distribution
+
+   * Use real CUR billing records.
+   * Correctly aggregate cost by AWS service.
+   * Ensure the chart total matches Total Cloud Spend.
+   * Keep labels/tooltips readable and aligned.
+
+7. Recommendations
+
+   * Load existing backend recommendation data.
+   * Do not generate fake recommendations.
+   * Show proper loading, empty and error states.
+
+8. Recent Cloud Activity
+
+   * Do not display misleading mock activity.
+   * If real activity data is not available, show a clear empty/unavailable state.
+
+9. Dashboard refresh/loading/error handling
+
+   * No infinite API loops.
+   * No duplicate API requests.
+   * No automatic AWS disconnect because of a Dashboard API 401/403.
+   * Preserve the last successful Dashboard data if a refresh fails.
+   * Show meaningful error messages instead of blank cards.
+
+10. Month selector
+
+* Verify that changing the selected month updates every billing-related Dashboard section consistently.
+* Prevent current-month data from being incorrectly used for another selected month.
+
+IMPORTANT BILLING RULE:
+AWS Cost Explorer must NOT be used.
+Billing source must remain:
+AWS CUR 2.0/Data Export → S3 → PostgreSQL → Dashboard.
+
+After fixing:
+
+* Run backend compilation/tests.
+* Run frontend build/type-check.
+* Verify all Dashboard API endpoints.
+* Check browser console/network errors.
+* Remove obsolete Dashboard mock/fallback logic where it causes incorrect output.
+* Do not break existing working AWS resource functionality.
+
+Finally provide:
+
+1. Exact root causes found.
+2. Files changed.
+3. What was fixed.
+4. Dashboard API endpoints verified.
+5. Build/test results.
+6. Any remaining issue that is genuinely caused by missing AWS CUR/database data.
+ CloudCostAI. Built for thoughtful cloud operations.</div></footer>
   </main>;
 }
 

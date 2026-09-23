@@ -1,5 +1,7 @@
 package com.cloudcostai.aws.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cloudcostai.aws.config.AwsBillingSyncProperties;
 import com.cloudcostai.aws.config.AwsClientFactory;
 import org.apache.commons.csv.CSVFormat;
@@ -23,9 +25,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 @Service
@@ -37,6 +41,48 @@ public class CurS3Service {
     public CurS3Service(AwsClientFactory clientFactory, AwsBillingSyncProperties properties) {
         this.clientFactory = clientFactory;
         this.properties = properties;
+    }
+
+    public static Set<String> parseManifestKeys(byte[] manifest, ObjectMapper objectMapper, String bucket, String prefix) {
+        try {
+            JsonNode root = objectMapper.readTree(manifest);
+            Set<String> keys = new LinkedHashSet<>();
+            collectFileLocations(root.path("fileLocations"), bucket, prefix, keys);
+            collectReportKeys(root.path("reportKeys"), prefix, keys);
+            if (keys.isEmpty()) throw new IllegalStateException("Manifest contains no supported data-file references.");
+            return keys;
+        } catch (IllegalStateException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("Unable to parse CUR manifest.", exception);
+        }
+    }
+
+    private static void collectFileLocations(JsonNode locations, String bucket, String prefix, Set<String> keys) {
+        if (!locations.isArray()) return;
+        for (JsonNode location : locations) {
+            String value = location.path("fileLocation").asText("");
+            if (value.isBlank()) continue;
+            if (value.startsWith("s3://")) {
+                int separator = value.indexOf('/', 5);
+                if (separator < 0 || !value.substring(5, separator).equals(bucket)) continue;
+                value = value.substring(separator + 1);
+            }
+            addSupportedKey(value, prefix, keys);
+        }
+    }
+
+    private static void collectReportKeys(JsonNode reportKeys, String prefix, Set<String> keys) {
+        if (!reportKeys.isArray()) return;
+        for (JsonNode key : reportKeys) addSupportedKey(key.asText(""), prefix, keys);
+    }
+
+    private static void addSupportedKey(String value, String prefix, Set<String> keys) {
+        if (value.isBlank()) return;
+        String normalizedPrefix = prefix == null ? "" : prefix;
+        String key = value.startsWith(normalizedPrefix) ? value : normalizedPrefix + value;
+        String lowerKey = key.toLowerCase(Locale.ROOT);
+        if (lowerKey.endsWith(".csv") || lowerKey.endsWith(".csv.gz") || lowerKey.endsWith(".gz")) keys.add(key);
     }
 
     public Export readLatest(String accessKey, String secretKey) {

@@ -1,7 +1,7 @@
 "use client";
 
 import ReactECharts from "echarts-for-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/providers/theme-provider";
 import { useQuery } from "@tanstack/react-query";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,11 +10,11 @@ import { getChartTheme } from "@/lib/chart-theme";
 import { fetchAwsCostTrend } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
 
-export default function CostTrendChart({ range, onRangeChange }: { range: string; onRangeChange: (range: string) => void }) {
+export default function CostTrendChart({ range, month, onRangeChange }: { range: string; month: string; onRangeChange: (range: string) => void }) {
   const { resolvedTheme } = useTheme();
   const colors = typeof document === "undefined" ? null : getChartTheme();
   const connectionToken = useCloudAccountStore((state) => state.connectionToken);
-  const trend = useQuery({ queryKey: ["aws-cost-trend", connectionToken, range], queryFn: () => fetchAwsCostTrend(connectionToken as string, range), enabled: Boolean(connectionToken), retry: false });
+  const trend = useQuery({ queryKey: ["aws-cost-trend", connectionToken, range, month], queryFn: () => fetchAwsCostTrend(connectionToken as string, range, month), enabled: Boolean(connectionToken), retry: false, placeholderData: (previous) => previous });
   const costTrendData = trend.data?.points ?? [];
   const currency = trend.data?.currency ?? "USD";
   const option = {
@@ -68,7 +68,7 @@ export default function CostTrendChart({ range, onRangeChange }: { range: string
 
       <CardContent>
         {trend.isLoading && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading cost data...</p>}
-        {trend.isError && <div className="flex h-[320px] flex-col items-center justify-center gap-3 text-sm text-destructive"><p>Unable to load cost data.</p><button type="button" className="rounded-lg border border-border px-3 py-1 text-foreground" onClick={() => trend.refetch()}>Try again</button></div>}
+        {trend.isError && !trend.data && <div className="flex h-[320px] flex-col items-center justify-center gap-3 text-sm text-destructive"><p>Unable to load cost data.</p><button type="button" className="rounded-lg border border-border px-3 py-1 text-foreground" onClick={() => trend.refetch()}>Try again</button></div>}
         {trend.isSuccess && costTrendData.length === 0 && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No billing data available for the selected period.</p>}
         {trend.isSuccess && costTrendData.length > 0 && <ReactECharts
     key={resolvedTheme}

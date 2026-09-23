@@ -35,12 +35,19 @@ public class SecurityConfig {
                 )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health").permitAll()
+                        .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/me", "/api/auth/logout").permitAll()
                         .requestMatchers("/api/aws/connect").permitAll()
                         .requestMatchers("/api/aws/connection").permitAll()
                         .requestMatchers("/api/aws/disconnect").permitAll()
                         .requestMatchers("/api/aws/cost-analytics").permitAll()
                         .requestMatchers("/api/aws/resources").permitAll()
                         .requestMatchers("/api/aws/dashboard").permitAll()
+                        .requestMatchers("/api/aws/insights").permitAll()
+                        .requestMatchers("/api/aws/reports/**").permitAll()
+                        .requestMatchers("/api/aws/recommendations/**").permitAll()
+                        .requestMatchers("/api/budgets/**").permitAll()
+                        .requestMatchers("/api/alerts/**").permitAll()
+                        .requestMatchers("/api/recommendations/**").permitAll()
                         .requestMatchers("/api/billing/**").permitAll()
                         .requestMatchers("/api/aws/bills").permitAll()
                         .anyRequest().authenticated()
@@ -54,7 +61,7 @@ public class SecurityConfig {
                 CorsConfiguration configuration = new CorsConfiguration();
                 configuration.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
                 configuration.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
-                configuration.setAllowedHeaders(List.of("Content-Type", "X-AWS-Connection-Token"));
+                configuration.setAllowedHeaders(List.of("Content-Type", "Authorization", "X-AWS-Connection-Token"));
                 UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
                 source.registerCorsConfiguration("/api/**", configuration);
                 return source;

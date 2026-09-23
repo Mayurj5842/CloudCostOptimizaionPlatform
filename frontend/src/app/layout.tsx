@@ -31,13 +31,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          disableTransitionOnChange
-          enableSystem
-          storageKey="cloudcost-theme"
-        >
+        <ThemeProvider>
           <AppProvider>{children}</AppProvider>
         </ThemeProvider>
       </body>

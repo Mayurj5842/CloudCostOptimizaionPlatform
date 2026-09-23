@@ -9,5 +9,6 @@ import java.util.UUID;
 
 public interface AwsRecommendationRepository extends JpaRepository<AwsRecommendation, UUID> {
     List<AwsRecommendation> findByAwsAccountIdOrderByCreatedAtDesc(String awsAccountId);
+    List<AwsRecommendation> findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(String awsAccountId, String billingMonth);
     Optional<AwsRecommendation> findByAwsAccountIdAndRecommendationKey(String awsAccountId, String recommendationKey);
 }

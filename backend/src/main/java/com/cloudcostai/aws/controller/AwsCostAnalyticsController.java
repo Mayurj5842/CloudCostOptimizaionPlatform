@@ -22,8 +22,9 @@ public class AwsCostAnalyticsController {
     @GetMapping("/cost-analytics")
     public ResponseEntity<ApiResponse<AwsCostAnalyticsResponse>> analytics(
             @RequestHeader("X-AWS-Connection-Token") String connectionToken,
-            @RequestParam(defaultValue = "CURRENT_MONTH") String period) {
+            @RequestParam(defaultValue = "CURRENT_MONTH") String period,
+            @RequestParam(required = false) String month) {
         return ResponseEntity.ok(new ApiResponse<>(true, "AWS cost analytics fetched successfully",
-                costAnalyticsService.getAnalytics(connectionToken, period)));
+                costAnalyticsService.getAnalytics(connectionToken, period, month)));
     }
 }

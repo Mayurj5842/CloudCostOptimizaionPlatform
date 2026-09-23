@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/providers/theme-provider";
 import { ShieldCheck, Loader2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";

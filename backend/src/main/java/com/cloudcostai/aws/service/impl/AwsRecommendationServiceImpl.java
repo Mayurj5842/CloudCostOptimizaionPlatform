@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -47,6 +48,18 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public AwsRecommendationResponse getRecommendations(String connectionToken, String month) {
+        var session = sessionService.getSession(connectionToken);
+        YearMonth selected = parseMonth(month, YearMonth.now());
+        List<AwsBilling> rows = billingRepository.findByAwsAccountId(session.accountId()).stream()
+                .filter(row -> inRange(row, selected.atDay(1), selected.plusMonths(1).atDay(1))).toList();
+        String currency = rows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse("USD");
+        if (rows.isEmpty()) return response(session.accountId(), currency, List.of(), selected, "NO_DATA", "No CUR billing data is available for this month.", null);
+        return response(session.accountId(), currency, recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(session.accountId(), selected.toString()), selected, "SUCCESS", null, sum(rows));
+    }
+
+    @Override
     @Transactional
     public AwsRecommendationResponse generateRecommendations(String connectionToken) {
         var session = sessionService.getSession(connectionToken);
@@ -65,7 +78,34 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
 
     @Override
     @Transactional
+    public AwsRecommendationResponse generateRecommendations(String connectionToken, String month) {
+        var session = sessionService.getSession(connectionToken);
+        YearMonth selected = parseMonth(month, YearMonth.now());
+        List<AwsBilling> rows = billingRepository.findByAwsAccountId(session.accountId());
+        LocalDate start = selected.atDay(1);
+        LocalDate end = selected.plusMonths(1).atDay(1);
+        List<AwsBilling> currentRows = rows.stream().filter(row -> inRange(row, start, end)).toList();
+        String currency = currentRows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse("USD");
+        if (currentRows.isEmpty()) return response(session.accountId(), currency, List.of(), selected, "NO_DATA", "No CUR billing data is available for this month.", null);
+        List<RecommendationDraft> drafts = analyze(rows, start, end, selected.minusMonths(1).atDay(1));
+        for (RecommendationDraft draft : drafts) {
+            AwsRecommendation entity = recommendationRepository.findByAwsAccountIdAndRecommendationKey(session.accountId(), draft.key())
+                    .orElseGet(() -> new AwsRecommendation(session.accountId(), draft.key(), draft.title(), draft.category(), draft.severity(), draft.service(), draft.resourceId(), draft.region(), draft.currentCost(), draft.reason(), draft.recommendation(), draft.action(), draft.potentialSavings(), "New", selected.toString()));
+            entity.update(draft.title(), draft.category(), draft.severity(), draft.service(), draft.resourceId(), draft.region(), draft.currentCost(), draft.reason(), draft.recommendation(), draft.action(), draft.potentialSavings(), entity.getStatus(), selected.toString());
+            recommendationRepository.save(entity);
+        }
+        return response(session.accountId(), currency, recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(session.accountId(), selected.toString()), selected, "SUCCESS", null, sum(currentRows));
+    }
+
+    @Override
+    @Transactional
     public AwsRecommendationResponse updateStatus(String connectionToken, String recommendationId, String status) {
+        return updateStatus(connectionToken, recommendationId, status, null);
+    }
+
+    @Override
+    @Transactional
+    public AwsRecommendationResponse updateStatus(String connectionToken, String recommendationId, String status, String month) {
         var session = sessionService.getSession(connectionToken);
         if (!List.of("New", "Applied", "Dismissed").contains(status)) throw new IllegalArgumentException("Status must be New, Applied, or Dismissed.");
         AwsRecommendation entity = recommendationRepository.findById(java.util.UUID.fromString(recommendationId))
@@ -73,7 +113,7 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
                 .orElseThrow(() -> new IllegalArgumentException("Recommendation was not found for this account."));
         entity.update(entity.getTitle(), entity.getCategory(), entity.getSeverity(), entity.getService(), entity.getResourceId(), entity.getRegion(), entity.getCurrentCost(), entity.getReason(), entity.getRecommendation(), entity.getAction(), entity.getPotentialSavings(), status);
         recommendationRepository.save(entity);
-        return getRecommendations(connectionToken);
+        return month == null || month.isBlank() ? getRecommendations(connectionToken) : getRecommendations(connectionToken, month);
     }
 
     private List<RecommendationDraft> analyze(List<AwsBilling> rows, LocalDate start, LocalDate end, LocalDate previousStart) {
@@ -99,9 +139,9 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
 
     private RecommendationDraft draft(String key, String title, String category, String severity, String service, String resourceId, String region, BigDecimal currentCost, String reason, String recommendation, String action, BigDecimal potentialSavings) { return new RecommendationDraft(key, title, category, severity, service, resourceId, region, money(currentCost), reason, recommendation, action, potentialSavings == null ? null : money(potentialSavings)); }
     private AwsRecommendationResponse response(String accountId, String currency, List<AwsRecommendation> entities) { return new AwsRecommendationResponse(accountId, currency, entities.stream().map(this::toResponse).sorted(Comparator.comparingInt(this::priorityRank).reversed()).toList()); }
-    private Recommendation toResponse(AwsRecommendation item) { return new Recommendation(item.getId().toString(), item.getService(), blank(item.getRegion(), "Unknown"), blank(item.getResourceId(), "Service total"), money(item.getCurrentCost()), item.getTitle(), item.getReason(), item.getRecommendation(), item.getAction(), item.getPotentialSavings() == null ? null : money(item.getPotentialSavings()), item.getSeverity(), item.getCategory(), item.getStatus(), item.getCreatedAt().toString(), resourcePath(item.getService())); }
+    private Recommendation toResponse(AwsRecommendation item) { return new Recommendation(item.getId().toString(), item.getService(), blank(item.getRegion(), "Unknown"), blank(item.getResourceId(), "Service total"), money(item.getCurrentCost()), item.getTitle(), item.getReason(), item.getRecommendation(), item.getAction(), item.getPotentialSavings() == null ? null : money(item.getPotentialSavings()), item.getSeverity(), item.getCategory(), item.getStatus(), item.getCreatedAt().toString(), resourcePath(item.getService()), item.getResourceId(), item.getReason(), item.getBillingMonth()); }
     private Map<String, BigDecimal> totals(List<AwsBilling> rows, LocalDate start, LocalDate end, Function<AwsBilling, String> key) { return rows.stream().filter(row -> inRange(row, start, end)).collect(Collectors.groupingBy(row -> blank(key.apply(row), "Unknown"), Collectors.reducing(ZERO, this::cost, BigDecimal::add))); }
-    private boolean inRange(AwsBilling row, LocalDate start, LocalDate end) { return row.getUsageStartDate() != null && !row.getUsageStartDate().isBefore(start) && row.getUsageStartDate().isBefore(end); }
+    private boolean inRange(AwsBilling row, LocalDate start, LocalDate end) { LocalDate date = row.getUsageStartDate() == null ? row.getBillingPeriodStart() : row.getUsageStartDate(); return date != null && !date.isBefore(start) && date.isBefore(end); }
     private BigDecimal cost(AwsBilling row) { return row.getCostAmount() == null ? ZERO : row.getCostAmount(); }
     private boolean hasResource(AwsBilling row) { return row.getResourceId() != null && !row.getResourceId().isBlank(); }
     private String serviceFor(List<AwsBilling> rows, String resource) { return rows.stream().filter(row -> resource.equals(row.getResourceId())).map(this::service).findFirst().orElse("AWS resource"); }
@@ -114,5 +154,8 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
     private String blank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
     private BigDecimal money(BigDecimal value) { return value == null ? ZERO : value.setScale(2, RoundingMode.HALF_UP); }
     private int priorityRank(Recommendation recommendation) { return "High".equals(recommendation.priority()) ? 3 : "Medium".equals(recommendation.priority()) ? 2 : 1; }
+    private AwsRecommendationResponse response(String accountId, String currency, List<AwsRecommendation> entities, YearMonth month, String status, String message, BigDecimal totalSpend) { return new AwsRecommendationResponse(accountId, currency, entities.stream().map(this::toResponse).sorted(Comparator.comparingInt(this::priorityRank).reversed()).toList(), month.toString(), status, message, totalSpend == null ? null : money(totalSpend)); }
+    private BigDecimal sum(List<AwsBilling> rows) { return rows.stream().map(this::cost).reduce(ZERO, BigDecimal::add); }
+    private YearMonth parseMonth(String month, YearMonth fallback) { if (month == null || month.isBlank()) return fallback; try { return YearMonth.parse(month); } catch (RuntimeException exception) { throw new IllegalArgumentException("Invalid month format. Please use YYYY-MM."); } }
     private record RecommendationDraft(String key, String title, String category, String severity, String service, String resourceId, String region, BigDecimal currentCost, String reason, String recommendation, String action, BigDecimal potentialSavings) {}
 }

@@ -16,6 +16,7 @@ import software.amazon.awssdk.services.ec2.model.Instance;
 import software.amazon.awssdk.services.ec2.model.Volume;
 import software.amazon.awssdk.services.ec2.model.Vpc;
 import software.amazon.awssdk.services.ec2.model.SecurityGroup;
+import software.amazon.awssdk.services.ec2.model.Tag;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.ListFunctionsRequest;
 import software.amazon.awssdk.services.lambda.model.FunctionConfiguration;
@@ -30,6 +31,8 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.ArrayList;
+import java.util.Comparator;
 
 @Service
 public class AwsResourceServiceImpl implements AwsResourceService {
@@ -56,7 +59,7 @@ public class AwsResourceServiceImpl implements AwsResourceService {
             List<AwsResourceResponse.VpcDto> vpcs = ec2.describeVpcsPaginator(DescribeVpcsRequest.builder().build())
                     .vpcs().stream().map(vpc -> toVpc(vpc, session.region())).toList();
             List<AwsResourceResponse.SecurityGroupDto> securityGroups = ec2.describeSecurityGroupsPaginator(DescribeSecurityGroupsRequest.builder().build())
-                    .securityGroups().stream().map(this::toSecurityGroup).toList();
+                    .securityGroups().stream().map(group -> toSecurityGroup(group, session.region())).toList();
             List<AwsResourceResponse.S3BucketDto> buckets = s3.listBuckets(ListBucketsRequest.builder().build()).buckets().stream()
                     .map(bucket -> toBucket(s3, bucket)).toList();
             List<AwsResourceResponse.RdsDatabaseDto> databases = rds.describeDBInstancesPaginator(DescribeDbInstancesRequest.builder().build())
@@ -69,26 +72,32 @@ public class AwsResourceServiceImpl implements AwsResourceService {
             int attached = (int) volumes.stream().filter(volume -> volume.attachedInstanceId() != null).count();
             int availableDatabases = (int) databases.stream().filter(database -> "available".equalsIgnoreCase(database.status())).count();
             int stoppedDatabases = (int) databases.stream().filter(database -> "stopped".equalsIgnoreCase(database.status())).count();
-            int activeResources = running + availableDatabases + functions.size() + buckets.size();
+                int activeFunctions = (int) functions.stream().filter(function -> "Active".equalsIgnoreCase(function.state())).count();
+                int availableVpcs = (int) vpcs.stream().filter(vpc -> "available".equalsIgnoreCase(vpc.state())).count();
+                int healthy = running + availableDatabases + activeFunctions + availableVpcs;
+                int activeResources = healthy + buckets.size() + attached;
             int total = instances.size() + volumes.size() + buckets.size() + databases.size() + functions.size() + vpcs.size() + securityGroups.size();
             AwsResourceSummary summary = new AwsResourceSummary(total, activeResources, instances.size(), running, stopped, volumes.size(), attached,
                     volumes.size() - attached, buckets.size(), databases.size(), availableDatabases, stoppedDatabases,
-                    functions.size(), vpcs.size(), securityGroups.size());
-            return new AwsResourceResponse(session.accountId(), session.region(), summary, instances, volumes, buckets, databases, functions, vpcs, securityGroups);
+                    functions.size(), vpcs.size(), securityGroups.size(), healthy, volumes.size() - attached);
+                return new AwsResourceResponse(session.accountId(), session.region(), summary, instances, volumes, buckets, databases, functions, vpcs, securityGroups,
+                    recentResources(instances, volumes, buckets, databases, functions));
         } catch (RuntimeException exception) {
             throw new AwsConnectionException("Unable to fetch AWS resources. Please verify AWS permissions and connection.", exception);
         }
     }
 
     private AwsResourceResponse.Ec2InstanceDto toInstance(Instance instance, String region) {
-        String name = instance.tags().stream().filter(tag -> "Name".equals(tag.key())).map(tag -> tag.value()).findFirst().orElse("");
-        return new AwsResourceResponse.Ec2InstanceDto(instance.instanceId(), name, instance.instanceTypeAsString(), instance.state().nameAsString(),
-                instance.placement().availabilityZone(), region, instance.privateIpAddress(), instance.publicIpAddress(), instant(instance.launchTime()));
+        String name = instance.tags().stream().filter(tag -> "Name".equals(tag.key())).map(Tag::value).findFirst().orElse("");
+        return new AwsResourceResponse.Ec2InstanceDto(instance.instanceId(), name, instance.instanceTypeAsString(), instance.state() == null ? null : instance.state().nameAsString(),
+            instance.placement() == null ? null : instance.placement().availabilityZone(), region, instance.privateIpAddress(), instance.publicIpAddress(), instant(instance.launchTime()),
+            instance.tags().stream().map(tag -> new AwsResourceResponse.TagDto(tag.key(), tag.value())).toList(), instance.platformAsString());
     }
 
     private AwsResourceResponse.EbsVolumeDto toVolume(Volume volume) {
         String attachedInstance = volume.attachments().stream().map(attachment -> attachment.instanceId()).filter(Objects::nonNull).findFirst().orElse(null);
-        return new AwsResourceResponse.EbsVolumeDto(volume.volumeId(), volume.volumeTypeAsString(), volume.size(), volume.stateAsString(), volume.availabilityZone(), attachedInstance);
+        return new AwsResourceResponse.EbsVolumeDto(volume.volumeId(), volume.volumeTypeAsString(), volume.size(), volume.stateAsString(), volume.availabilityZone(), attachedInstance,
+            instant(volume.createTime()), volume.encrypted());
     }
 
     private AwsResourceResponse.S3BucketDto toBucket(S3Client s3, Bucket bucket) {
@@ -97,7 +106,7 @@ public class AwsResourceServiceImpl implements AwsResourceService {
             String location = s3.getBucketLocation(GetBucketLocationRequest.builder().bucket(bucket.name()).build()).locationConstraintAsString();
             if (location != null && !location.isBlank()) region = "EU".equals(location) ? "eu-west-1" : location;
         } catch (S3Exception exception) {
-            throw exception;
+            region = "Not available";
         }
         return new AwsResourceResponse.S3BucketDto(bucket.name(), instant(bucket.creationDate()), region);
     }
@@ -105,20 +114,37 @@ public class AwsResourceServiceImpl implements AwsResourceService {
     private AwsResourceResponse.RdsDatabaseDto toDatabase(DBInstance database, String region) {
         String endpoint = database.endpoint() == null ? null : database.endpoint().address();
         return new AwsResourceResponse.RdsDatabaseDto(database.dbInstanceIdentifier(), database.engine(), database.engineVersion(),
-                database.dbInstanceClass(), database.dbInstanceStatus(), database.availabilityZone(), endpoint, region);
+            database.dbInstanceClass(), database.dbInstanceStatus(), database.availabilityZone(), endpoint, region,
+            database.allocatedStorage(), instant(database.instanceCreateTime()), database.multiAZ());
     }
 
     private AwsResourceResponse.LambdaFunctionDto toFunction(FunctionConfiguration function, String region) {
         return new AwsResourceResponse.LambdaFunctionDto(function.functionName(), function.runtimeAsString(), function.memorySize(),
-                function.timeout(), function.lastModified(), function.functionArn(), region);
+            function.timeout(), function.lastModified(), function.functionArn(), region, function.handler(), function.stateAsString(), function.lastUpdateStatusAsString());
     }
 
     private AwsResourceResponse.VpcDto toVpc(Vpc vpc, String region) {
-        return new AwsResourceResponse.VpcDto(vpc.vpcId(), vpc.cidrBlock(), vpc.stateAsString(), vpc.isDefault(), region);
+        String name = vpc.tags().stream().filter(tag -> "Name".equals(tag.key())).map(Tag::value).findFirst().orElse(null);
+        return new AwsResourceResponse.VpcDto(vpc.vpcId(), vpc.cidrBlock(), vpc.stateAsString(), vpc.isDefault(), region, name);
     }
 
-    private AwsResourceResponse.SecurityGroupDto toSecurityGroup(SecurityGroup group) {
-        return new AwsResourceResponse.SecurityGroupDto(group.groupId(), group.groupName(), group.description(), group.vpcId());
+    private AwsResourceResponse.SecurityGroupDto toSecurityGroup(SecurityGroup group, String region) {
+        return new AwsResourceResponse.SecurityGroupDto(group.groupId(), group.groupName(), group.description(), group.vpcId(), region,
+                group.ipPermissions().size(), group.ipPermissionsEgress().size());
+    }
+
+    private List<AwsResourceResponse.RecentResourceDto> recentResources(List<AwsResourceResponse.Ec2InstanceDto> instances,
+                                                                         List<AwsResourceResponse.EbsVolumeDto> volumes,
+                                                                         List<AwsResourceResponse.S3BucketDto> buckets,
+                                                                         List<AwsResourceResponse.RdsDatabaseDto> databases,
+                                                                         List<AwsResourceResponse.LambdaFunctionDto> functions) {
+        List<AwsResourceResponse.RecentResourceDto> recent = new ArrayList<>();
+        instances.stream().filter(item -> item.launchTime() != null).forEach(item -> recent.add(new AwsResourceResponse.RecentResourceDto("EC2", item.instanceId(), item.name(), item.launchTime(), item.state())));
+        volumes.stream().filter(item -> item.creationTime() != null).forEach(item -> recent.add(new AwsResourceResponse.RecentResourceDto("EBS", item.volumeId(), item.volumeId(), item.creationTime(), item.state())));
+        buckets.stream().filter(item -> item.creationDate() != null).forEach(item -> recent.add(new AwsResourceResponse.RecentResourceDto("S3", item.bucketName(), item.bucketName(), item.creationDate(), "Unknown")));
+        databases.stream().filter(item -> item.creationTime() != null).forEach(item -> recent.add(new AwsResourceResponse.RecentResourceDto("RDS", item.identifier(), item.identifier(), item.creationTime(), item.status())));
+        functions.stream().filter(item -> item.lastModified() != null).forEach(item -> recent.add(new AwsResourceResponse.RecentResourceDto("Lambda", item.functionName(), item.functionName(), item.lastModified(), item.state())));
+        return recent.stream().sorted(Comparator.comparing(AwsResourceResponse.RecentResourceDto::timestamp).reversed()).limit(20).toList();
     }
 
     private String instant(java.time.Instant value) {

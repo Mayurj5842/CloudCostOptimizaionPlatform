@@ -20,26 +20,37 @@ type SearchItem = {
 };
 
 const pages: SearchItem[] = [
-  { title: "Overview", description: "Cloud operations overview", route: "/", category: "Pages", keywords: ["overview", "dashboard", "home"], icon: BarChart3 },
-  { title: "Cost Analytics", description: "Analyze AWS cloud spending", route: "/billing", category: "Pages", keywords: ["cost", "analytics", "billing", "spend", "aws"], icon: BarChart3 },
-  { title: "Resources", description: "Browse live AWS resources", route: "/resources", category: "Pages", keywords: ["resource", "inventory", "ec2", "s3", "rds", "lambda"], icon: Server },
-  { title: "Cloud Accounts", description: "Connect and manage cloud accounts", route: "/integrations", category: "Pages", keywords: ["account", "aws", "integration", "connect"], icon: Cloud },
+  { title: "Overview", description: "Cloud operations overview", route: "/dashboard", category: "Pages", keywords: ["overview", "dashboard", "home", "workspace", "summary", "cloud operations"], icon: BarChart3 },
+  { title: "Dashboard", description: "Main workspace overview and key metrics", route: "/dashboard", category: "Pages", keywords: ["dashboard", "overview", "workspace", "main", "metrics", "total cost"], icon: BarChart3 },
+  { title: "Cost Analytics", description: "Analyze AWS cloud spending and billing trends", route: "/billing", category: "Pages", keywords: ["cost", "analytics", "billing", "spend", "aws", "report", "reports", "trend", "breakdown", "charge", "charges"], icon: BarChart3 },
+  { title: "Bills", description: "AWS bill summary and billing period details", route: "/billing/bills", category: "Pages", keywords: ["bill", "bills", "invoice", "billing", "summary", "price", "report", "reports"], icon: BarChart3 },
+  { title: "Reports", description: "Spending summaries and operational reporting", route: "/reports", category: "Pages", keywords: ["report", "reports", "summary", "analytics", "billing", "cost", "trend"], icon: BarChart3 },
+  { title: "Resources", description: "Browse live AWS resources and inventory", route: "/resources", category: "Pages", keywords: ["resource", "resources", "inventory", "ec2", "s3", "rds", "lambda", "aws", "regions", "region", "instance", "instances", "bucket", "buckets"], icon: Server },
+  { title: "Regions", description: "AWS regional resource inventory and distribution", route: "/resources", category: "Pages", keywords: ["region", "regions", "aws", "location", "availability", "deployment", "resource"], icon: Server },
+  { title: "Cloud Accounts", description: "Connect and manage AWS accounts", route: "/integrations", category: "Pages", keywords: ["account", "accounts", "aws", "connection", "connect", "integration", "integrations", "cloud"], icon: Cloud },
+  { title: "AI Insights", description: "Actionable findings from billing and resource data", route: "/insights", category: "Pages", keywords: ["ai", "insights", "recommendation", "recommendations", "optimization", "analysis", "predict", "prediction", "ml", "smart"], icon: Search },
+  { title: "AI Recommendations", description: "Optimization opportunities and next actions", route: "/recommendations", category: "Pages", keywords: ["ai", "recommendation", "recommendations", "insights", "optimization", "suggestion", "suggestions"], icon: Search },
+  { title: "Budgets & Alerts", description: "Budget thresholds and alert monitoring", route: "/budgets", category: "Pages", keywords: ["budget", "budgets", "alert", "alerts", "threshold", "monitoring", "spend limit", "warning", "usage"], icon: Search },
+  { title: "Alerts", description: "Budget warning and spend monitoring events", route: "/budgets", category: "Pages", keywords: ["alert", "alerts", "warning", "budget", "monitoring", "notifications"], icon: Search },
+  { title: "Profile", description: "View your CloudCostAI profile", route: "/profile", category: "Pages", keywords: ["profile", "user", "account"], icon: Search },
+  { title: "Settings", description: "Manage connection, preferences, and diagnostics", route: "/settings", category: "Pages", keywords: ["settings", "preferences", "diagnostics", "theme", "session"], icon: Search },
+  { title: "Help & Documentation", description: "Guides, architecture, FAQ, and troubleshooting", route: "/help", category: "Pages", keywords: ["help", "docs", "documentation", "faq", "troubleshooting", "getting started", "how it works"], icon: FileSearch },
 ];
 
 const services: SearchItem[] = [
-  ["EC2", "AWS compute resources", ["ec2", "compute", "instance"]],
-  ["S3", "AWS object storage", ["s3", "storage", "bucket"]],
-  ["RDS", "AWS managed databases", ["rds", "database"]],
-  ["Lambda", "AWS serverless functions", ["lambda", "function", "serverless"]],
-  ["EBS", "AWS block storage volumes", ["ebs", "volume"]],
-  ["VPC", "AWS virtual networks", ["vpc", "network"]],
-  ["CloudWatch", "AWS monitoring and observability", ["cloudwatch", "monitoring"]],
-  ["DynamoDB", "AWS NoSQL database", ["dynamodb", "database"]],
-  ["ECS", "AWS container orchestration", ["ecs", "container"]],
-  ["EKS", "AWS Kubernetes service", ["eks", "kubernetes"]],
-  ["CloudFront", "AWS content delivery", ["cloudfront", "cdn"]],
-  ["ELB", "AWS load balancing", ["elb", "load balancer"]],
-].map(([title, description, keywords]) => ({ title, description, route: "/resources", category: "AWS Services", keywords: keywords as string[], icon: Database }));
+  { title: "EC2", description: "AWS compute resources", route: "/resources", category: "AWS Services", keywords: ["ec2", "compute", "instance"], icon: Database },
+  { title: "S3", description: "AWS object storage", route: "/resources", category: "AWS Services", keywords: ["s3", "storage", "bucket"], icon: Database },
+  { title: "RDS", description: "AWS managed databases", route: "/resources", category: "AWS Services", keywords: ["rds", "database"], icon: Database },
+  { title: "Lambda", description: "AWS serverless functions", route: "/resources", category: "AWS Services", keywords: ["lambda", "function", "serverless"], icon: Database },
+  { title: "EBS", description: "AWS block storage volumes", route: "/resources", category: "AWS Services", keywords: ["ebs", "volume"], icon: Database },
+  { title: "VPC", description: "AWS virtual networks", route: "/resources", category: "AWS Services", keywords: ["vpc", "network"], icon: Database },
+  { title: "CloudWatch", description: "AWS monitoring and observability", route: "/resources", category: "AWS Services", keywords: ["cloudwatch", "monitoring"], icon: Database },
+  { title: "DynamoDB", description: "AWS NoSQL database", route: "/resources", category: "AWS Services", keywords: ["dynamodb", "database"], icon: Database },
+  { title: "ECS", description: "AWS container orchestration", route: "/resources", category: "AWS Services", keywords: ["ecs", "container"], icon: Database },
+  { title: "EKS", description: "AWS Kubernetes service", route: "/resources", category: "AWS Services", keywords: ["eks", "kubernetes"], icon: Database },
+  { title: "CloudFront", description: "AWS content delivery", route: "/resources", category: "AWS Services", keywords: ["cloudfront", "cdn"], icon: Database },
+  { title: "ELB", description: "AWS load balancing", route: "/resources", category: "AWS Services", keywords: ["elb", "load balancer"], icon: Database },
+];
 
 const categoryOrder = ["Pages", "AWS Services", "AWS Resources"] as const;
 
@@ -57,13 +68,13 @@ function rank(item: SearchItem, query: string) {
 function resourceItems(data?: AwsResourceResponse): SearchItem[] {
   if (!data) return [];
   return [
-    ...data.ec2Instances.map((item) => ({ title: item.name || item.instanceId, description: `EC2 Instance · ${item.instanceId} · ${item.state}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.name, item.instanceId, item.region, item.state, "ec2"], icon: Server, resource: true })),
-    ...data.s3Buckets.map((item) => ({ title: item.bucketName, description: `S3 Bucket · ${item.region}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.bucketName, item.region, "s3", "bucket"], icon: Cloud, resource: true })),
-    ...data.rdsDatabases.map((item) => ({ title: item.identifier, description: `RDS Database · ${item.status} · ${item.region}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.identifier, item.engine, item.region, "rds", "database"], icon: Database, resource: true })),
-    ...data.lambdaFunctions.map((item) => ({ title: item.functionName, description: `Lambda Function · ${item.runtime} · ${item.region}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.functionName, item.region, "lambda", "function"], icon: Cloud, resource: true })),
-    ...data.ebsVolumes.map((item) => ({ title: item.volumeId, description: `EBS Volume · ${item.state} · ${item.availabilityZone}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.volumeId, item.state, item.availabilityZone, "ebs", "volume"], icon: Server, resource: true })),
-    ...data.vpcs.map((item) => ({ title: item.vpcId, description: `VPC · ${item.cidrBlock} · ${item.region}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.vpcId, item.cidrBlock, item.region, "vpc"], icon: Cloud, resource: true })),
-    ...data.securityGroups.map((item) => ({ title: item.groupName || item.groupId, description: `Security Group · ${item.groupId}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.groupName, item.groupId, "security group"], icon: Server, resource: true })),
+    ...data.ec2Instances.map((item) => ({ title: item.name || item.instanceId, description: `EC2 Instance · ${item.instanceId} · ${item.state || "Unknown"}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.name || "", item.instanceId, item.region, item.state || "", "ec2"], icon: Server, resource: true })),
+    ...data.s3Buckets.map((item) => ({ title: item.bucketName, description: `S3 Bucket · ${item.region || "Unknown"}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.bucketName, item.region || "", "s3", "bucket"], icon: Cloud, resource: true })),
+    ...data.rdsDatabases.map((item) => ({ title: item.identifier, description: `RDS Database · ${item.status || "Unknown"} · ${item.region}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.identifier, item.engine || "", item.region, "rds", "database"], icon: Database, resource: true })),
+    ...data.lambdaFunctions.map((item) => ({ title: item.functionName, description: `Lambda Function · ${item.runtime || "Unknown"} · ${item.region}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.functionName, item.region, "lambda", "function"], icon: Cloud, resource: true })),
+    ...data.ebsVolumes.map((item) => ({ title: item.volumeId, description: `EBS Volume · ${item.state || "Unknown"} · ${item.availabilityZone || "Unknown"}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.volumeId, item.state || "", item.availabilityZone || "", "ebs", "volume"], icon: Server, resource: true })),
+    ...data.vpcs.map((item) => ({ title: item.vpcId, description: `VPC · ${item.cidrBlock || "Unknown"} · ${item.region}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.vpcId, item.cidrBlock || "", item.region, "vpc"], icon: Cloud, resource: true })),
+    ...data.securityGroups.map((item) => ({ title: item.groupName || item.groupId, description: `Security Group · ${item.groupId}`, route: "/resources", category: "AWS Resources" as const, keywords: [item.groupName || "", item.groupId, "security group"], icon: Server, resource: true })),
   ];
 }
 
@@ -80,8 +91,16 @@ export function GlobalSearchTrigger() {
   const resourceQuery = useQuery({ queryKey: ["aws-resources", account?.accountId, connectionToken], queryFn: () => fetchAwsResources(connectionToken as string), enabled: open && Boolean(connectionToken) && debouncedQuery.trim().length >= 2, staleTime: 5 * 60 * 1000, retry: false });
 
   React.useEffect(() => {
-    const stored = window.localStorage.getItem("cloudcost-search-recent");
-    if (stored) setRecent(JSON.parse(stored));
+    const timer = window.setTimeout(() => {
+      const stored = window.localStorage.getItem("cloudcost-search-recent");
+      if (!stored) return;
+      try {
+        setRecent(JSON.parse(stored) as string[]);
+      } catch {
+        setRecent([]);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300);

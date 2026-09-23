@@ -1,0 +1,7 @@
+ALTER TABLE aws_connection_sessions
+ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE
+USING created_at AT TIME ZONE 'UTC';
+
+ALTER TABLE aws_connection_sessions
+ALTER COLUMN expires_at TYPE TIMESTAMP WITH TIME ZONE
+USING expires_at AT TIME ZONE 'UTC';

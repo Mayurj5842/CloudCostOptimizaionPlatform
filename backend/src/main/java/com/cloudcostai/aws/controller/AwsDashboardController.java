@@ -22,24 +22,27 @@ public class AwsDashboardController {
 
     @GetMapping("/dashboard")
     public ResponseEntity<ApiResponse<AwsDashboardResponse>> dashboard(
-            @RequestHeader("X-AWS-Connection-Token") String connectionToken) {
+            @RequestHeader("X-AWS-Connection-Token") String connectionToken,
+            @RequestParam(required = false) String month) {
         return ResponseEntity.ok(new ApiResponse<>(true, "AWS dashboard fetched successfully",
-                dashboardService.getDashboard(connectionToken)));
+                dashboardService.getDashboard(connectionToken, month)));
     }
 
     @GetMapping("/dashboard/cost-trend")
     public ResponseEntity<ApiResponse<AwsDashboardChartResponse>> costTrend(
             @RequestHeader("X-AWS-Connection-Token") String connectionToken,
-            @RequestParam(defaultValue = "30D") String range) {
+            @RequestParam(defaultValue = "30D") String range,
+            @RequestParam(required = false) String month) {
         return ResponseEntity.ok(new ApiResponse<>(true, "Cost trend aggregated from PostgreSQL",
-                dashboardService.getCostTrend(connectionToken, range)));
+                dashboardService.getCostTrend(connectionToken, range, month)));
     }
 
     @GetMapping("/dashboard/service-distribution")
     public ResponseEntity<ApiResponse<AwsDashboardChartResponse>> serviceDistribution(
             @RequestHeader("X-AWS-Connection-Token") String connectionToken,
-            @RequestParam(defaultValue = "30D") String range) {
+            @RequestParam(defaultValue = "30D") String range,
+            @RequestParam(required = false) String month) {
         return ResponseEntity.ok(new ApiResponse<>(true, "Service distribution aggregated from PostgreSQL",
-                dashboardService.getServiceDistribution(connectionToken, range)));
+                dashboardService.getServiceDistribution(connectionToken, range, month)));
     }
 }
