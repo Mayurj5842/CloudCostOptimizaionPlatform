@@ -1,6 +1,7 @@
 package com.cloudcostai.aws.controller;
 
 import com.cloudcostai.aws.config.AwsBillingSyncProperties;
+import com.cloudcostai.aws.config.AwsClientFactory;
 import com.cloudcostai.aws.dto.response.SystemDiagnosticsResponse;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
@@ -11,6 +12,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -23,15 +26,18 @@ public class SystemDiagnosticsController {
     private final AwsBillingRepository billingRepository;
     private final AwsResourceService resourceService;
     private final AwsBillingSyncProperties billingProperties;
+    private final AwsClientFactory clientFactory;
 
     public SystemDiagnosticsController(AwsConnectionSessionService sessionService,
                                        AwsBillingRepository billingRepository,
                                        AwsResourceService resourceService,
-                                       AwsBillingSyncProperties billingProperties) {
+                                       AwsBillingSyncProperties billingProperties,
+                                       AwsClientFactory clientFactory) {
         this.sessionService = sessionService;
         this.billingRepository = billingRepository;
         this.resourceService = resourceService;
         this.billingProperties = billingProperties;
+        this.clientFactory = clientFactory;
     }
 
     @GetMapping("/diagnostics")
@@ -46,9 +52,18 @@ public class SystemDiagnosticsController {
             accountId = session.accountId();
             checks.add(check("aws-session", "AWS Session", "HEALTHY", "Session is valid."));
             checks.add(check("aws-region", "AWS Region", "HEALTHY", session.region()));
+            try (StsClient stsClient = clientFactory.createStsClient(session.accessKey(), session.secretKey(), session.region())) {
+                var identity = stsClient.getCallerIdentity(GetCallerIdentityRequest.builder().build());
+                checks.add(check("aws-connectivity", "AWS Connectivity", "HEALTHY",
+                        "AWS authenticated account " + identity.account() + " is reachable."));
+            } catch (RuntimeException awsException) {
+                checks.add(check("aws-connectivity", "AWS Connectivity", "FAILED",
+                        failureDetail("AWS authentication or connectivity failed", awsException)));
+            }
         } catch (RuntimeException exception) {
             checks.add(check("aws-session", "AWS Session", "FAILED", "The AWS session could not be validated."));
             checks.add(check("aws-region", "AWS Region", "UNAVAILABLE", "AWS region is unavailable."));
+            checks.add(check("aws-connectivity", "AWS Connectivity", "UNAVAILABLE", "AWS connectivity could not be checked because the session is invalid."));
         }
 
         try {
@@ -75,9 +90,13 @@ public class SystemDiagnosticsController {
             }
             try {
                 resourceService.discoverResources(connectionToken);
+                checks.add(check("aws-permissions", "AWS Permissions", "HEALTHY", "Required AWS resource permissions are available."));
                 checks.add(check("resource-inventory", "Resource Inventory", "HEALTHY", "AWS resource inventory is reachable."));
             } catch (RuntimeException exception) {
-                checks.add(check("resource-inventory", "Resource Inventory", "WARNING", "AWS resource inventory is unavailable."));
+                checks.add(check("aws-permissions", "AWS Permissions", "FAILED",
+                        failureDetail("Required AWS permissions could not be verified", exception)));
+                checks.add(check("resource-inventory", "Resource Inventory", "FAILED",
+                        failureDetail("AWS resource inventory is unavailable", exception)));
             }
         }
 
@@ -91,5 +110,10 @@ public class SystemDiagnosticsController {
 
     private SystemDiagnosticsResponse.DiagnosticItem check(String key, String label, String status, String detail) {
         return new SystemDiagnosticsResponse.DiagnosticItem(key, label, status, detail);
+    }
+
+    private String failureDetail(String prefix, RuntimeException exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? prefix + "." : prefix + ": " + message;
     }
 }

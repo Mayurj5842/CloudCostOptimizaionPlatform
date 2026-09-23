@@ -17,6 +17,7 @@ import com.cloudcostai.aws.service.AwsInsightService;
 import com.cloudcostai.aws.service.AwsRecommendationService;
 import com.cloudcostai.aws.service.AwsReportService;
 import com.cloudcostai.aws.service.AwsResourceService;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.billing.dto.AlertResponse;
 import com.cloudcostai.billing.dto.BudgetResponse;
 import com.cloudcostai.billing.service.BudgetService;
@@ -44,6 +45,7 @@ public class AwsReportServiceImpl implements AwsReportService {
     private final AwsRecommendationService recommendationService;
     private final AwsResourceService resourceService;
     private final BudgetService budgetService;
+    private final AwsBillingSourceResolver billingSourceResolver;
 
     @Autowired
     public AwsReportServiceImpl(AwsConnectionSessionService sessionService,
@@ -52,7 +54,8 @@ public class AwsReportServiceImpl implements AwsReportService {
                                 AwsInsightService insightService,
                                 AwsRecommendationService recommendationService,
                                 AwsResourceService resourceService,
-                                BudgetService budgetService) {
+                                BudgetService budgetService,
+                                AwsBillingSourceResolver billingSourceResolver) {
         this.sessionService = sessionService;
         this.billingRepository = billingRepository;
         this.billingProperties = billingProperties;
@@ -60,6 +63,7 @@ public class AwsReportServiceImpl implements AwsReportService {
         this.recommendationService = recommendationService;
         this.resourceService = resourceService;
         this.budgetService = budgetService;
+        this.billingSourceResolver = billingSourceResolver;
     }
 
     public AwsReportServiceImpl(AwsConnectionSessionService sessionService,
@@ -68,7 +72,7 @@ public class AwsReportServiceImpl implements AwsReportService {
                                 AwsInsightService insightService,
                                 AwsRecommendationService recommendationService,
                                 AwsResourceService resourceService) {
-        this(sessionService, billingRepository, billingProperties, insightService, recommendationService, resourceService, null);
+                    this(sessionService, billingRepository, billingProperties, insightService, recommendationService, resourceService, null, null);
     }
 
     @Override
@@ -76,14 +80,17 @@ public class AwsReportServiceImpl implements AwsReportService {
         var session = sessionService.getSession(connectionToken);
         DateRange selected = resolvePeriod(month);
         String billingMonth = selected.start().toString().substring(0, 7);
-        List<AwsBilling> allRows = billingRepository.findByAwsAccountId(session.accountId());
-        List<AwsBilling> current = validRows(allRows, selected);
-        List<AwsBilling> previous = validRows(allRows, new DateRange(selected.start().minusMonths(1), selected.start()));
+        String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), YearMonth.from(selected.start())).dataSource();
+        List<AwsBilling> currentRows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId()) : billingSourceResolver.rows(session.accountId(), dataSource, selected.start(), selected.end());
+        String previousSource = billingSourceResolver == null ? dataSource : billingSourceResolver.resolve(session.accountId(), YearMonth.from(selected.start()).minusMonths(1)).dataSource();
+        List<AwsBilling> previousRows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId()) : billingSourceResolver.rows(session.accountId(), previousSource, selected.start().minusMonths(1), selected.start());
+        List<AwsBilling> current = validRows(currentRows, selected);
+        List<AwsBilling> previous = validRows(previousRows, new DateRange(selected.start().minusMonths(1), selected.start()));
         String currency = current.stream().map(AwsBilling::getCurrency).filter(this::present).findFirst().orElse("USD");
         BigDecimal total = sum(current);
         Instant generatedAt = Instant.now();
         if (current.isEmpty() || total.signum() <= 0) {
-            return new AwsReportResponse(session.accountId(), "NO_DATA", "CUR_S3_POSTGRESQL", billingMonth,
+            return new AwsReportResponse(session.accountId(), "NO_DATA", dataSource, billingMonth,
                     selected.start().toString(), selected.end().minusDays(1).toString(), generatedAt, null, currency,
                     new Summary(null, null, null, null), List.of(), List.of(), List.of(), null, "NOT_AVAILABLE",
                     List.of(), List.of(), new SavingsSummary(null, false),
@@ -143,7 +150,7 @@ public class AwsReportServiceImpl implements AwsReportService {
             partial = true;
         }
         String status = partial ? "PARTIAL" : "SUCCESS";
-        return new AwsReportResponse(session.accountId(), status, "CUR_S3_POSTGRESQL", billingMonth,
+        return new AwsReportResponse(session.accountId(), status, dataSource, billingMonth,
                 selected.start().toString(), selected.end().minusDays(1).toString(), generatedAt, latestUpdated(session.accountId()), currency,
                 new Summary(money(total), previousTotal.signum() == 0 ? null : money(previousTotal), changeAmount, changePercentage),
                 serviceBreakdown, trend, drivers, resources == null ? null : resources.summary(), resourceStatus,

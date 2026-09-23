@@ -26,7 +26,8 @@ function AwsConnectionRestorer({ children }: AppProviderProps) {
   const restore = useCloudAccountStore((state) => state.restore);
   const disconnect = useCloudAccountStore((state) => state.disconnect);
   const setConnectionStatus = useCloudAccountStore((state) => state.setConnectionStatus);
-  const query = useQuery({ queryKey: ["aws-connection"], queryFn: getAwsConnection, retry: 1 });
+  const connectionToken = useCloudAccountStore((state) => state.connectionToken);
+  const query = useQuery({ queryKey: ["aws-connection", connectionToken], queryFn: () => getAwsConnection(connectionToken as string), enabled: Boolean(connectionToken), retry: 1 });
 
   React.useEffect(() => {
     if (query.isSuccess) {

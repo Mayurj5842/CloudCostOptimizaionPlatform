@@ -13,6 +13,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Configuration
 @EnableWebSecurity
@@ -41,7 +42,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/aws/disconnect").permitAll()
                         .requestMatchers("/api/aws/cost-analytics").permitAll()
                         .requestMatchers("/api/aws/resources").permitAll()
-                        .requestMatchers("/api/aws/dashboard").permitAll()
+                        .requestMatchers("/api/aws/dashboard/**").permitAll()
+                        .requestMatchers("/api/aws/live-cost").permitAll()
+                        .requestMatchers("/api/aws/recent-activity").permitAll()
                         .requestMatchers("/api/aws/insights").permitAll()
                         .requestMatchers("/api/aws/reports/**").permitAll()
                         .requestMatchers("/api/aws/recommendations/**").permitAll()
@@ -50,6 +53,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/recommendations/**").permitAll()
                         .requestMatchers("/api/billing/**").permitAll()
                         .requestMatchers("/api/aws/bills").permitAll()
+                        .requestMatchers("/api/system/diagnostics").permitAll()
                         .anyRequest().authenticated()
                 );
 
@@ -59,9 +63,14 @@ public class SecurityConfig {
         @Bean
         CorsConfigurationSource corsConfigurationSource() {
                 CorsConfiguration configuration = new CorsConfiguration();
-                configuration.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
-                configuration.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
-                configuration.setAllowedHeaders(List.of("Content-Type", "Authorization", "X-AWS-Connection-Token"));
+                configuration.setAllowedOriginPatterns(Arrays.stream(allowedOrigins.split(","))
+                                .map(String::trim)
+                                .filter(origin -> !origin.isBlank())
+                                .collect(Collectors.toList()));
+                configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+                configuration.setAllowedHeaders(List.of("*"));
+                configuration.setAllowCredentials(true);
+                configuration.setMaxAge(3600L);
                 UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
                 source.registerCorsConfiguration("/api/**", configuration);
                 return source;

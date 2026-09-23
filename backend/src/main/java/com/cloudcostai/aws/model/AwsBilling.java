@@ -4,7 +4,6 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -12,12 +11,12 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "aws_billing", uniqueConstraints = @UniqueConstraint(columnNames = "record_key"))
+@Table(name = "aws_billing")
 public class AwsBilling {
     @Id
     private UUID id;
 
-    @Column(name = "aws_account_id", nullable = false)
+    @Column(name = "aws_account_id", nullable = false, length = 100)
     private String awsAccountId;
 
     @Column(name = "billing_period_start", nullable = false)
@@ -26,22 +25,22 @@ public class AwsBilling {
     @Column(name = "billing_period_end", nullable = false)
     private LocalDate billingPeriodEnd;
 
-    @Column(name = "service_name", nullable = false)
+    @Column(name = "service_name", nullable = false, length = 255)
     private String serviceName;
 
-    @Column(name = "region")
+    @Column(name = "region", length = 100)
     private String region;
 
-    @Column(name = "product_name")
+    @Column(name = "product_name", length = 255)
     private String productName;
 
-    @Column(name = "usage_type")
+    @Column(name = "usage_type", length = 255)
     private String usageType;
 
-    @Column(name = "resource_id")
+    @Column(name = "resource_id", length = 500)
     private String resourceId;
 
-    @Column(name = "line_item_type")
+    @Column(name = "line_item_type", length = 100)
     private String lineItemType;
 
     @Column(name = "usage_start_date")
@@ -50,7 +49,7 @@ public class AwsBilling {
     @Column(name = "usage_end_date")
     private LocalDate usageEndDate;
 
-    @Column(name = "record_key", nullable = false, unique = true)
+    @Column(name = "record_key", nullable = false, unique = true, length = 128)
     private String recordKey;
 
     @Column(name = "usage_amount", nullable = false)
@@ -59,11 +58,14 @@ public class AwsBilling {
     @Column(name = "cost_amount", nullable = false)
     private BigDecimal costAmount;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 10)
     private String currency;
 
     @Column(nullable = false)
     private boolean estimated;
+
+    @Column(name = "data_source", nullable = false, length = 32)
+    private String dataSource;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
@@ -90,6 +92,28 @@ public class AwsBilling {
                       LocalDate usageStartDate,
                       LocalDate usageEndDate,
                       String recordKey) {
+                this(awsAccountId, billingPeriodStart, billingPeriodEnd, serviceName, region, usageAmount, costAmount,
+                    currency, estimated, productName, usageType, resourceId, lineItemType, usageStartDate, usageEndDate,
+                    recordKey, "CUR_2_0");
+                }
+
+                public AwsBilling(String awsAccountId,
+                          LocalDate billingPeriodStart,
+                          LocalDate billingPeriodEnd,
+                          String serviceName,
+                          String region,
+                          BigDecimal usageAmount,
+                          BigDecimal costAmount,
+                          String currency,
+                          boolean estimated,
+                          String productName,
+                          String usageType,
+                          String resourceId,
+                          String lineItemType,
+                          LocalDate usageStartDate,
+                          LocalDate usageEndDate,
+                          String recordKey,
+                          String dataSource) {
         this.id = UUID.randomUUID();
         this.awsAccountId = awsAccountId;
         this.billingPeriodStart = billingPeriodStart;
@@ -107,6 +131,7 @@ public class AwsBilling {
         this.costAmount = costAmount;
         this.currency = currency;
         this.estimated = estimated;
+        this.dataSource = dataSource;
         this.createdAt = LocalDateTime.now();
         this.updatedAt = this.createdAt;
     }
@@ -166,6 +191,8 @@ public class AwsBilling {
     public boolean isEstimated() {
         return estimated;
     }
+
+    public String getDataSource() { return dataSource; }
 
     public LocalDateTime getCreatedAt() {
         return createdAt;

@@ -120,8 +120,10 @@ export async function fetchAwsDashboard(connectionToken: string, month?: string)
   return response.data.data;
 }
 
-export async function getAwsConnection(): Promise<AwsConnectionResponse | null> {
-  const response = await axios.get<ApiResponse<AwsConnectionResponse | null>>(`${apiUrl}/api/aws/connection`);
+export async function getAwsConnection(connectionToken: string): Promise<AwsConnectionResponse | null> {
+  const response = await axios.get<ApiResponse<AwsConnectionResponse | null>>(`${apiUrl}/api/aws/connection`, {
+    headers: getAwsHeaders(connectionToken),
+  });
   return response.data.data;
 }
 
@@ -134,8 +136,10 @@ export async function testAwsConnection(connectionToken: string): Promise<AwsCon
   return response.data.data;
 }
 
-export async function disconnectAwsAccount(): Promise<void> {
-  await axios.post(`${apiUrl}/api/aws/disconnect`);
+export async function disconnectAwsAccount(connectionToken: string): Promise<void> {
+  await axios.post(`${apiUrl}/api/aws/disconnect`, undefined, {
+    headers: getAwsHeaders(connectionToken),
+  });
 }
 
 export type DiagnosticStatus = "HEALTHY" | "WARNING" | "FAILED" | "UNAVAILABLE";
@@ -416,6 +420,7 @@ export type AwsDashboardChartResponse = {
   services: Array<{ service: string; cost: number; percentage: number }>;
   totalCost: number | null;
   dataStatus: "AVAILABLE" | "NO_BILLING_DATA" | "UNAVAILABLE";
+  dataSource: "CUR_2_0" | "COST_EXPLORER" | string;
 };
 
 export async function fetchAwsCostTrend(connectionToken: string, range: string, month?: string): Promise<AwsDashboardChartResponse> {
@@ -480,6 +485,47 @@ export async function downloadAwsReportPdf(connectionToken: string, month: strin
     }
     if (axios.isAxiosError(error) && error.response?.status === 422) {
       throw new Error("No CUR billing data is available for the selected month.");
+    }
+    throw error;
+  }
+}
+
+export type AwsRecentActivityResponse = { activities: Array<{ id: string; service: string; action: string; message: string; resourceId: string; region: string; timestamp: string }> };
+
+export async function fetchAwsRecentActivity(connectionToken: string, limit = 10): Promise<AwsRecentActivityResponse> {
+  const response = await axios.get<ApiResponse<AwsRecentActivityResponse>>(`${apiUrl}/api/aws/recent-activity`, {
+    params: { limit },
+    headers: getAwsHeaders(connectionToken),
+  });
+  return response.data.data;
+}
+
+export type AwsLiveCostResponse = {
+  accountId: string;
+  billingPeriodStart: string;
+  billingPeriodEnd: string;
+  currency: string;
+  cost: number | null;
+  regions: Array<{ region: string; cost: number; currency: string; fetchedAt: string }>;
+  services: Array<{ service: string; cost: number; currency: string; fetchedAt: string }>;
+  dataSource: "COST_EXPLORER";
+  fetchedAt: string;
+  status: "SUCCESS" | "NO_DATA" | string;
+  message: string | null;
+};
+
+export async function fetchLiveAwsCost(connectionToken: string, month: string): Promise<AwsLiveCostResponse> {
+  try {
+    const response = await axios.get<ApiResponse<AwsLiveCostResponse>>(`${apiUrl}/api/aws/live-cost`, {
+      params: { month },
+      headers: getAwsHeaders(connectionToken),
+    });
+    return response.data.data;
+  } catch (error) {
+    if (axios.isAxiosError<ApiResponse<unknown>>(error)) {
+      if (error.response?.status === 401) throw new Error("Your AWS connection session is no longer valid. Please reconnect.");
+      if (error.response?.status === 403) throw new Error("AWS Cost Explorer permission is unavailable.");
+      throw new Error(error.response?.data.message ?? "AWS Cost Explorer could not fetch live cost data.");
     }
     throw error;
   }

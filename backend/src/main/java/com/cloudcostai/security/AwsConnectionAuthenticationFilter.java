@@ -14,6 +14,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.List;
 
+import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
+
 @Component
 public class AwsConnectionAuthenticationFilter extends OncePerRequestFilter {
 
@@ -26,10 +28,16 @@ public class AwsConnectionAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return "/api/aws/connect".equals(path)
+        return path.startsWith("/api/auth/")
+            || "/api/aws/connect".equals(path)
                 || "/api/aws/connection".equals(path)
                 || "/api/aws/disconnect".equals(path)
                 || "OPTIONS".equalsIgnoreCase(request.getMethod());
+    }
+
+    @Override
+    protected boolean shouldNotFilterErrorDispatch() {
+        return true;
     }
 
     @Override
@@ -41,7 +49,7 @@ public class AwsConnectionAuthenticationFilter extends OncePerRequestFilter {
 
         if (connectionToken == null || connectionToken.isBlank()) {
             if (isProtectedApi(path)) {
-                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "AWS connection is required.");
+                writeUnauthorized(response, "AWS connection is required.");
                 return;
             }
             filterChain.doFilter(request, response);
@@ -60,11 +68,17 @@ public class AwsConnectionAuthenticationFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
         } catch (Exception exception) {
             if (isProtectedApi(path)) {
-                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "AWS connection token is invalid or expired.");
+                writeUnauthorized(response, "AWS connection token is invalid or expired.");
                 return;
             }
             filterChain.doFilter(request, response);
         }
+    }
+
+    private void writeUnauthorized(HttpServletResponse response, String message) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType(APPLICATION_JSON_VALUE);
+        response.getWriter().write("{\"success\":false,\"message\":\"" + message + "\"}");
     }
 
     private boolean isProtectedApi(String path) {

@@ -7,6 +7,7 @@ import com.cloudcostai.aws.model.AwsRecommendation;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.repository.AwsRecommendationRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -30,6 +31,7 @@ class AwsRecommendationServiceImplTest {
     @Mock private AwsConnectionSessionService sessionService;
     @Mock private AwsBillingRepository billingRepository;
     @Mock private AwsRecommendationRepository recommendationRepository;
+    @Mock private AwsBillingSourceResolver billingSourceResolver;
 
     @Test
     void noCurDataReturnsNoDataWithoutRecommendations() {
@@ -74,7 +76,7 @@ class AwsRecommendationServiceImplTest {
     private AwsRecommendationServiceImpl service(List<AwsBilling> rows) {
         when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession("access", "secret", "ap-south-1", "123456789012", Instant.now().plusSeconds(600)));
         when(billingRepository.findByAwsAccountId("123456789012")).thenReturn(rows);
-        return new AwsRecommendationServiceImpl(sessionService, billingRepository, recommendationRepository);
+        return new AwsRecommendationServiceImpl(sessionService, billingRepository, recommendationRepository, billingSourceResolver);
     }
 
     private AwsResourceResponse resources() {

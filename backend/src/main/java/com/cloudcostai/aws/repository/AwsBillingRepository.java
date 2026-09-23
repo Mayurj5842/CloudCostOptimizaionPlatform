@@ -12,7 +12,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface AwsBillingRepository extends JpaRepository<AwsBilling, UUID> {
-        List<AwsBilling> findByAwsAccountId(String awsAccountId);
+        @Query("select b from AwsBilling b where b.awsAccountId = :accountId and b.dataSource = 'CUR_2_0'")
+        List<AwsBilling> findByAwsAccountId(@Param("accountId") String awsAccountId);
 
     Optional<AwsBilling> findByAwsAccountIdAndBillingPeriodStartAndBillingPeriodEndAndServiceNameAndRegion(
             String awsAccountId,
@@ -30,20 +31,27 @@ public interface AwsBillingRepository extends JpaRepository<AwsBilling, UUID> {
 
         boolean existsByRecordKey(String recordKey);
 
-        @Query("select coalesce(sum(b.costAmount), 0) from AwsBilling b where b.awsAccountId = :accountId and b.usageStartDate >= :start and b.usageStartDate < :end")
+        Optional<AwsBilling> findByRecordKey(String recordKey);
+
+        List<AwsBilling> findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(String awsAccountId, String dataSource);
+
+        @Query("select coalesce(sum(b.costAmount), 0) from AwsBilling b where b.awsAccountId = :accountId and b.dataSource = 'CUR_2_0' and b.usageStartDate >= :start and b.usageStartDate < :end")
         BigDecimal sumCost(String accountId, LocalDate start, LocalDate end);
 
-        @Query("select distinct b.currency from AwsBilling b where b.awsAccountId = :accountId")
+        @Query("select distinct b.currency from AwsBilling b where b.awsAccountId = :accountId and b.dataSource = 'CUR_2_0'")
         List<String> findCurrencies(@Param("accountId") String accountId);
 
-        @Query(value = "select cast(coalesce(usage_start_date, billing_period_start) as date) as period, coalesce(sum(cost_amount), 0) as cost from aws_billing where aws_account_id = :accountId and coalesce(usage_start_date, billing_period_start) >= :startDate and coalesce(usage_start_date, billing_period_start) < :endDate group by cast(coalesce(usage_start_date, billing_period_start) as date) order by period", nativeQuery = true)
+        @Query(value = "select cast(coalesce(usage_start_date, billing_period_start) as date) as period, coalesce(sum(cost_amount), 0) as cost from aws_billing where aws_account_id = :accountId and data_source = 'CUR_2_0' and coalesce(usage_start_date, billing_period_start) >= :startDate and coalesce(usage_start_date, billing_period_start) < :endDate group by cast(coalesce(usage_start_date, billing_period_start) as date) order by period", nativeQuery = true)
         List<CostTrendProjection> findDailyCostTrend(@Param("accountId") String accountId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
-        @Query(value = "select date_trunc('month', coalesce(usage_start_date, billing_period_start))::date as period, coalesce(sum(cost_amount), 0) as cost from aws_billing where aws_account_id = :accountId and coalesce(usage_start_date, billing_period_start) >= :startDate and coalesce(usage_start_date, billing_period_start) < :endDate group by date_trunc('month', coalesce(usage_start_date, billing_period_start))::date order by period", nativeQuery = true)
+        @Query(value = "select date_trunc('month', coalesce(usage_start_date, billing_period_start))::date as period, coalesce(sum(cost_amount), 0) as cost from aws_billing where aws_account_id = :accountId and data_source = 'CUR_2_0' and coalesce(usage_start_date, billing_period_start) >= :startDate and coalesce(usage_start_date, billing_period_start) < :endDate group by date_trunc('month', coalesce(usage_start_date, billing_period_start))::date order by period", nativeQuery = true)
         List<CostTrendProjection> findMonthlyCostTrend(@Param("accountId") String accountId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
-        @Query(value = "select coalesce(service_name, 'Others') as service, coalesce(sum(cost_amount), 0) as cost from aws_billing where aws_account_id = :accountId and coalesce(usage_start_date, billing_period_start) >= :startDate and coalesce(usage_start_date, billing_period_start) < :endDate group by coalesce(service_name, 'Others') order by cost desc", nativeQuery = true)
-        List<ServiceDistributionProjection> findServiceDistribution(@Param("accountId") String accountId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+        @Query(value = "select coalesce(service_name, 'Others') as service, coalesce(sum(cost_amount), 0) as cost from aws_billing where aws_account_id = :accountId and data_source = :dataSource and coalesce(usage_start_date, billing_period_start) >= :startDate and coalesce(usage_start_date, billing_period_start) < :endDate group by coalesce(service_name, 'Others') order by cost desc", nativeQuery = true)
+        List<ServiceDistributionProjection> findServiceDistribution(@Param("accountId") String accountId, @Param("dataSource") String dataSource, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+
+        @Query(value = "select coalesce(sum(cost_amount), 0) from aws_billing where aws_account_id = :accountId and data_source = :dataSource and coalesce(usage_start_date, billing_period_start) >= :startDate and coalesce(usage_start_date, billing_period_start) < :endDate", nativeQuery = true)
+        BigDecimal sumCostBySource(@Param("accountId") String accountId, @Param("dataSource") String dataSource, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
         interface CostTrendProjection {
                 LocalDate getPeriod();

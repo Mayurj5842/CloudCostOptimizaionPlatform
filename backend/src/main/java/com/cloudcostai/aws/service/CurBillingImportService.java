@@ -57,6 +57,9 @@ public class CurBillingImportService {
             LocalDate end = date(value.get("line_item_usage_end_date"));
             if (start == null || cost == null) continue;
             if (end == null) end = start;
+            total = total.add(cost);
+            periodStart = periodStart == null || start.isBefore(periodStart) ? start : periodStart;
+            periodEnd = periodEnd == null || end.isAfter(periodEnd) ? end : periodEnd;
             String key = hash(accountId + "|" + value);
             if (billingRepository.existsByRecordKey(key)) { skipped++; continue; }
             String rowCurrency = first(value, "line_item_currency_code", "pricing_currency");
@@ -68,9 +71,6 @@ public class CurBillingImportService {
                     value.get("product_product_name"), value.get("line_item_usage_type"),
                     value.get("line_item_resource_id"), value.get("line_item_line_item_type"), start, end, key));
             inserted++;
-            total = total.add(cost);
-            periodStart = periodStart == null || start.isBefore(periodStart) ? start : periodStart;
-            periodEnd = periodEnd == null || end.isAfter(periodEnd) ? end : periodEnd;
         }
         logger.info("CUR records processed: {}", export.rows().size());
         logger.info("New records inserted: {}", inserted);

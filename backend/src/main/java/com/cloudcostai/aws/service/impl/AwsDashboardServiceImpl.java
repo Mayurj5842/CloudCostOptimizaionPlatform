@@ -10,6 +10,7 @@ import com.cloudcostai.aws.dto.response.AwsResourceResponse;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsDashboardService;
 import com.cloudcostai.aws.service.AwsResourceService;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.repository.AwsRecommendationRepository;
@@ -35,6 +36,7 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
     private final AwsBillingRepository billingRepository;
     private final AwsRecommendationRepository recommendationRepository;
     private final BudgetRepository budgetRepository;
+    private final AwsBillingSourceResolver billingSourceResolver;
 
     public AwsDashboardServiceImpl(AwsClientFactory clientFactory,
                                    AwsConnectionSessionService sessionService,
@@ -49,12 +51,22 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
                                    AwsResourceService resourceService,
                                    AwsBillingRepository billingRepository,
                                    AwsRecommendationRepository recommendationRepository,
-                                   BudgetRepository budgetRepository) {
+                                   BudgetRepository budgetRepository,
+                                   AwsBillingSourceResolver billingSourceResolver) {
         this.sessionService = sessionService;
         this.resourceService = resourceService;
         this.billingRepository = billingRepository;
         this.recommendationRepository = recommendationRepository;
         this.budgetRepository = budgetRepository;
+        this.billingSourceResolver = billingSourceResolver;
+    }
+
+    public AwsDashboardServiceImpl(AwsConnectionSessionService sessionService,
+                                   AwsResourceService resourceService,
+                                   AwsBillingRepository billingRepository,
+                                   AwsRecommendationRepository recommendationRepository,
+                                   BudgetRepository budgetRepository) {
+        this(sessionService, resourceService, billingRepository, recommendationRepository, budgetRepository, null);
     }
 
     public AwsDashboardResponse getDashboard(String connectionToken) {
@@ -72,34 +84,42 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
     public AwsDashboardChartResponse getCostTrend(String connectionToken, String range, String month) {
         var session = sessionService.getSession(connectionToken);
         ChartRange selected = chartRange(range, selectedMonth(month));
-        List<AwsBillingRepository.CostTrendProjection> rows = selected.monthly()
-                ? billingRepository.findMonthlyCostTrend(session.accountId(), selected.start(), selected.end())
-                : billingRepository.findDailyCostTrend(session.accountId(), selected.start(), selected.end());
+        List<AwsBilling> billingRows = sourceRows(session.accountId(), selectedMonth(month), selected.start(), selected.end());
+        Map<LocalDate, BigDecimal> grouped = billingRows.stream().collect(Collectors.groupingBy(this::billingDate,
+            Collectors.reducing(BigDecimal.ZERO, row -> row.getCostAmount() == null ? BigDecimal.ZERO : row.getCostAmount(), BigDecimal::add)));
+        BigDecimal total = grouped.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), selectedMonth(month)).dataSource();
         return new AwsDashboardChartResponse(session.accountId(), currency(session.accountId()), selected.name(),
-                rows.stream().map(row -> new AwsDashboardChartResponse.CostPoint(row.getPeriod().toString(), money(row.getCost()))).toList(),
-            List.of(), rows.isEmpty() ? null : money(rows.stream().map(AwsBillingRepository.CostTrendProjection::getCost).reduce(BigDecimal.ZERO, BigDecimal::add)), rows.isEmpty() ? "NO_BILLING_DATA" : "AVAILABLE");
+            grouped.entrySet().stream().sorted(Map.Entry.comparingByKey()).map(row -> new AwsDashboardChartResponse.CostPoint(row.getKey().toString(), money(row.getValue()))).toList(),
+            List.of(), billingRows.isEmpty() ? null : money(total), billingRows.isEmpty() ? "NO_BILLING_DATA" : "AVAILABLE", dataSource);
     }
 
     @Override
-        public AwsDashboardChartResponse getServiceDistribution(String connectionToken, String range, String month) {
+    public AwsDashboardChartResponse getServiceDistribution(String connectionToken, String range, String month) {
         var session = sessionService.getSession(connectionToken);
         YearMonth selectedMonth = selectedMonth(month);
         ChartRange selected = chartRange(range, selectedMonth);
-        List<AwsBillingRepository.ServiceDistributionProjection> rows = billingRepository.findServiceDistribution(session.accountId(), selectedMonth.atDay(1), selectedMonth.plusMonths(1).atDay(1));
-        BigDecimal total = rows.stream().map(AwsBillingRepository.ServiceDistributionProjection::getCost).reduce(BigDecimal.ZERO, BigDecimal::add);
-        List<AwsDashboardChartResponse.ServicePoint> services = rows.stream()
-                .map(row -> new AwsDashboardChartResponse.ServicePoint(row.getService(), money(row.getCost()), percentage(row.getCost(), total))).toList();
+        String dataSource = billingSource(session.accountId(), selectedMonth);
+        List<AwsBillingRepository.ServiceDistributionProjection> grouped = billingRepository.findServiceDistribution(
+                session.accountId(), dataSource, selected.start(), selected.end());
+        BigDecimal total = billingRepository.sumCostBySource(session.accountId(), dataSource, selected.start(), selected.end());
+        List<AwsDashboardChartResponse.ServicePoint> services = grouped.stream()
+            .map(row -> new AwsDashboardChartResponse.ServicePoint(row.getService(), chartMoney(row.getCost()), percentage(row.getCost(), total))).toList();
         return new AwsDashboardChartResponse(session.accountId(), currency(session.accountId()), selected.name(), List.of(), services,
-            rows.isEmpty() ? null : money(total), rows.isEmpty() ? "NO_BILLING_DATA" : "AVAILABLE");
+            grouped.isEmpty() ? null : chartMoney(total), grouped.isEmpty() ? "NO_BILLING_DATA" : "AVAILABLE", dataSource);
+    }
+
+    private String billingSource(String accountId, YearMonth month) {
+        return billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(accountId, month).dataSource();
     }
 
     private AwsDashboardResponse databaseDashboard(String accountId, AwsResourceResponse resources, YearMonth selectedMonth) {
         LocalDate monthStart = selectedMonth.atDay(1);
         LocalDate nextMonth = monthStart.plusMonths(1);
-        List<AwsBilling> allRows = billingRepository.findByAwsAccountId(accountId);
-        List<AwsBilling> current = rowsInRange(allRows, monthStart, nextMonth);
+        List<AwsBilling> allRows = sourceRows(accountId, selectedMonth, selectedMonth.minusMonths(5).atDay(1), nextMonth);
+        List<AwsBilling> current = sourceRows(accountId, selectedMonth, monthStart, nextMonth);
         BigDecimal currentCost = current.stream().map(AwsBilling::getCostAmount).filter(value -> value != null).reduce(BigDecimal.ZERO, BigDecimal::add);
-        List<AwsBilling> previous = rowsInRange(allRows, monthStart.minusMonths(1), monthStart);
+        List<AwsBilling> previous = sourceRows(accountId, selectedMonth.minusMonths(1), monthStart.minusMonths(1), monthStart);
         BigDecimal previousCost = previous.stream().map(AwsBilling::getCostAmount).filter(value -> value != null).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal change = previous.isEmpty() || previousCost.signum() == 0 ? null : currentCost.subtract(previousCost).multiply(BigDecimal.valueOf(100)).divide(previousCost, 2, RoundingMode.HALF_UP);
         Map<String, BigDecimal> services = current.stream().collect(Collectors.groupingBy(row -> row.getServiceName() == null ? "Other AWS services" : row.getServiceName(), Collectors.reducing(BigDecimal.ZERO, row -> row.getCostAmount() == null ? BigDecimal.ZERO : row.getCostAmount(), BigDecimal::add)));
@@ -114,8 +134,9 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
             ? new AwsDashboardResponse.Savings(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(accountId, selectedMonth.toString()).stream().map(item -> item.getPotentialSavings()).filter(value -> value != null && value.signum() > 0).reduce(BigDecimal.ZERO, BigDecimal::add), rowCurrency, selectedMonth.toString()) : null;
         AwsDashboardResponse.BudgetUsage budget = budgetUsage(accountId, selectedMonth, currentCost, rowCurrency);
         String status = current.isEmpty() ? "NO_DATA" : "AVAILABLE";
+        String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(accountId, selectedMonth).dataSource();
         return new AwsDashboardResponse(accountId, spend, new AwsDashboardResponse.ActiveResources(resources.summary().activeResources()), savings, budget, trend, distribution,
-                new AwsDashboardResponse.Billing(status, "AWS_CUR_2_0_POSTGRESQL", current.isEmpty() ? null : selectedMonth.atEndOfMonth().toString(), monthStart.toString(), nextMonth.minusDays(1).toString(), current.isEmpty() ? "No CUR billing rows for the selected month." : null));
+            new AwsDashboardResponse.Billing(status, dataSource, current.isEmpty() ? null : selectedMonth.atEndOfMonth().toString(), monthStart.toString(), nextMonth.minusDays(1).toString(), current.isEmpty() ? "No CUR billing rows for the selected month." : null));
     }
 
     private List<AwsBilling> rowsInRange(List<AwsBilling> rows, LocalDate start, LocalDate end) {
@@ -160,10 +181,19 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
         };
     }
 
+    private List<AwsBilling> sourceRows(String accountId, YearMonth month, LocalDate start, LocalDate end) {
+        if (billingSourceResolver != null) return billingSourceResolver.rows(accountId, billingSourceResolver.resolve(accountId, month).dataSource(), start, end);
+        return billingRepository.findByAwsAccountId(accountId).stream().filter(row -> !billingDate(row).isBefore(start) && billingDate(row).isBefore(end)).toList();
+    }
+
     private record ChartRange(String name, LocalDate start, LocalDate end, boolean monthly) {}
 
     private BigDecimal money(BigDecimal value) {
         return value == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : value.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal chartMoney(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO.setScale(6, RoundingMode.HALF_UP) : value.setScale(6, RoundingMode.HALF_UP);
     }
 
     private BigDecimal percentage(BigDecimal value, BigDecimal total) {

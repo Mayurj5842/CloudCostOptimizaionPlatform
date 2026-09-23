@@ -20,6 +20,17 @@ export default function SettingsPage() {
   const dashboard = useQuery({ queryKey: ["settings-dashboard", account?.accountId, connectionToken], queryFn: () => fetchAwsDashboard(connectionToken as string), enabled: Boolean(connectionToken), retry: false });
   const connectionTest = useMutation({ mutationFn: () => testAwsConnection(connectionToken as string), onSuccess: (result) => setNotice(result.message), onError: () => setNotice("Connection test failed. Your AWS state was not changed.") });
   const diagnostics = useQuery({ queryKey: ["system-diagnostics", account?.accountId, connectionToken], queryFn: () => fetchSystemDiagnostics(connectionToken as string), enabled: false, retry: false });
+  const diagnosticsPassed = diagnostics.data?.checks.every((check) => check.status === "HEALTHY");
+  const diagnosticsFailed = diagnostics.data?.checks.some((check) => check.status === "FAILED" || check.status === "UNAVAILABLE");
+  const diagnosticsMessage = diagnostics.isError
+    ? (diagnostics.error instanceof Error ? diagnostics.error.message : "Diagnostics could not be completed. Verify the AWS connection and try again.")
+    : diagnosticsPassed
+      ? "All AWS, session, permission, database, and backend checks passed."
+      : diagnosticsFailed
+        ? "Diagnostics completed with failed checks. Review the details below."
+        : diagnostics.data
+          ? "Diagnostics completed with warnings. Review the details below."
+          : null;
 
   useEffect(() => {
     const timer = window.setTimeout(() => setNotifications(window.localStorage.getItem("cloudcost-notifications") !== "false"), 0);
@@ -29,7 +40,7 @@ export default function SettingsPage() {
   const handleDisconnect = async () => {
     if (!window.confirm("Disconnect this AWS account?")) return;
     try {
-      await disconnectAwsAccount();
+      await disconnectAwsAccount(connectionToken as string);
       disconnect();
       setNotice("AWS account disconnected.");
     } catch {
@@ -55,7 +66,7 @@ export default function SettingsPage() {
       <Card><CardHeader><CardTitle>Appearance</CardTitle></CardHeader><CardContent><label className="text-sm"><span className="mb-1.5 block text-muted-foreground">Theme</span><select className="h-9 w-full rounded-lg border border-border bg-background px-3" value={theme ?? "system"} onChange={(event) => setTheme(event.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></CardContent></Card>
       <Card><CardHeader><CardTitle>Security / Session</CardTitle></CardHeader><CardContent className="space-y-3"><Info label="Credentials" value="Never displayed or stored in the browser" /><Info label="Session token" value="Not displayed" /><Info label="Automatic disconnect" value="Disabled" /><Info label="Logout" value="No logout provider configured" /></CardContent></Card>
     </div>
-    <Card><CardHeader className="flex-row items-center justify-between"><CardTitle>System Diagnostics</CardTitle><Button disabled={!connectionToken || diagnostics.isFetching} onClick={() => diagnostics.refetch()} variant="outline"><LoaderCircle className={`size-4 ${diagnostics.isFetching ? "animate-spin" : ""}`} />Run Diagnostics</Button></CardHeader><CardContent>{!connectionToken && <p className="text-sm text-muted-foreground">Connect AWS to run live checks.</p>}{diagnostics.isError && <p className="flex gap-2 text-sm text-destructive"><AlertTriangle className="size-4" />Diagnostics failed; the AWS connection was not changed.</p>}{diagnostics.data && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{diagnostics.data.checks.map((check) => <div className="rounded-lg border border-border bg-muted/20 p-3" key={check.key}><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">{check.label}</p><Status status={check.status} /></div><p className="mt-2 text-xs text-muted-foreground">{check.detail}</p></div>)}</div>}</CardContent></Card>
+    <Card><CardHeader className="flex-row items-center justify-between"><CardTitle>System Diagnostics</CardTitle><Button disabled={!connectionToken || diagnostics.isFetching} onClick={() => diagnostics.refetch()} variant="outline"><LoaderCircle className={`size-4 ${diagnostics.isFetching ? "animate-spin" : ""}`} />Run Diagnostics</Button></CardHeader><CardContent>{!connectionToken && <p className="text-sm text-muted-foreground">Connect AWS to run live checks.</p>}{diagnosticsMessage && <p className={`flex gap-2 text-sm ${diagnosticsPassed ? "text-success" : diagnosticsFailed || diagnostics.isError ? "text-destructive" : "text-warning"}`}>{diagnosticsPassed ? <CheckCircle2 className="size-4" /> : <AlertTriangle className="size-4" />}{diagnosticsMessage}</p>}{diagnostics.data && <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{diagnostics.data.checks.map((check) => <div className="rounded-lg border border-border bg-muted/20 p-3" key={check.key}><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">{check.label}</p><Status status={check.status} /></div><p className="mt-2 text-xs text-muted-foreground">{check.detail}</p></div>)}</div>}</CardContent></Card>
   </div>;
 }
 

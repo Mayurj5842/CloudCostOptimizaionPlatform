@@ -64,12 +64,12 @@
 		</dependency>
 		<dependency>
 			<groupId>software.amazon.awssdk</groupId>
-			<artifactId>costexplorer</artifactId>
+			<artifactId>budgets</artifactId>
 			<version>2.20.100</version>
 		</dependency>
 		<dependency>
 			<groupId>software.amazon.awssdk</groupId>
-			<artifactId>budgets</artifactId>
+			<artifactId>costexplorer</artifactId>
 			<version>2.20.100</version>
 		</dependency>
 		<dependency>

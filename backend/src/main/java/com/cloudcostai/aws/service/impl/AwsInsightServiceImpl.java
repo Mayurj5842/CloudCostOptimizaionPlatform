@@ -5,6 +5,7 @@ import com.cloudcostai.aws.dto.response.AwsInsightResponse.Insight;
 import com.cloudcostai.aws.dto.response.AwsRecommendationResponse.Recommendation;
 import com.cloudcostai.aws.service.AwsRecommendationService;
 import com.cloudcostai.aws.service.AwsResourceService;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
@@ -30,28 +31,33 @@ public class AwsInsightServiceImpl implements AwsInsightService {
     private final AwsBillingRepository billingRepository;
     private final AwsRecommendationService recommendationService;
     private final AwsResourceService resourceService;
+    private final AwsBillingSourceResolver billingSourceResolver;
 
     @Autowired
     public AwsInsightServiceImpl(AwsConnectionSessionService sessionService,
                                  AwsBillingRepository billingRepository,
                                  AwsRecommendationService recommendationService,
-                                 AwsResourceService resourceService) {
+                                 AwsResourceService resourceService,
+                                 AwsBillingSourceResolver billingSourceResolver) {
         this.sessionService = sessionService;
         this.billingRepository = billingRepository;
         this.recommendationService = recommendationService;
         this.resourceService = resourceService;
+        this.billingSourceResolver = billingSourceResolver;
     }
 
     public AwsInsightServiceImpl(AwsConnectionSessionService sessionService,
                                  AwsBillingRepository billingRepository) {
-        this(sessionService, billingRepository, null, null);
+        this(sessionService, billingRepository, null, null, null);
     }
 
     @Override
     public AwsInsightResponse getInsights(String connectionToken, String month) {
         var session = sessionService.getSession(connectionToken);
-        List<AwsBilling> rows = billingRepository.findByAwsAccountId(session.accountId());
         DateRange selected = dateRange(month);
+        YearMonth selectedMonth = YearMonth.from(selected.start());
+        String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), selectedMonth).dataSource();
+        List<AwsBilling> rows = sourceRows(session.accountId(), selectedMonth, selected.start(), selected.end());
         LocalDate currentStart = selected.start();
         LocalDate currentEnd = selected.end();
         LocalDate previousStart = currentStart.minusMonths(1);
@@ -59,7 +65,7 @@ public class AwsInsightServiceImpl implements AwsInsightService {
         String currency = rows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse("USD");
         if (currentRows.isEmpty()) {
             return new AwsInsightResponse(session.accountId(), currency, LocalDateTime.now().toString(), List.of(),
-                    List.of(), "NO_CUR_DATA", "CUR_POSTGRESQL", currentStart.toString(), currentEnd.minusDays(1).toString(), null, null,
+                    List.of(), "NO_CUR_DATA", dataSource, currentStart.toString(), currentEnd.minusDays(1).toString(), null, null,
                     "No CUR billing data is available for this period.");
         }
         List<Insight> insights = new ArrayList<>();
@@ -166,6 +172,11 @@ public class AwsInsightServiceImpl implements AwsInsightService {
         } catch (RuntimeException exception) {
             throw new IllegalArgumentException("Invalid billing month. Please use YYYY-MM.");
         }
+    }
+
+    private List<AwsBilling> sourceRows(String accountId, YearMonth month, LocalDate start, LocalDate end) {
+        if (billingSourceResolver != null) return billingSourceResolver.rows(accountId, billingSourceResolver.resolve(accountId, month).dataSource(), start, end);
+        return billingRepository.findByAwsAccountId(accountId).stream().filter(row -> inRange(row, start, end)).toList();
     }
 
     private record DateRange(LocalDate start, LocalDate end) {}

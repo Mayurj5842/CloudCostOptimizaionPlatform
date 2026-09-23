@@ -13,7 +13,7 @@ server:
 # AWS COST EXPLORER API CALL IS DISABLED TO PREVENT ADDITIONAL COST
 billing:
   sync:
-    enabled: ${AWS_BILLING_IMPORT_ENABLED:false}
+    enabled: ${AWS_BILLING_IMPORT_ENABLED:true}
     interval-hours: ${AWS_BILLING_IMPORT_INTERVAL_HOURS:24}
 
 aws:

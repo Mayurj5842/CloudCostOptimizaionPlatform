@@ -1,0 +1,4 @@
+ALTER TABLE aws_billing
+    DROP CONSTRAINT IF EXISTS aws_billing_aws_account_id_billing_period_start_billing_per_key;
+
+DROP INDEX IF EXISTS aws_billing_aws_account_id_billing_period_start_billing_per_key;

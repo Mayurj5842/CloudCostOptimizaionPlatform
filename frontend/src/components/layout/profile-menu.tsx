@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { getCurrentUserProfile } from "@/lib/current-user";
+import { useAuthStore } from "@/store/auth-store";
+import { useCloudAccountStore } from "@/store/cloud-account-store";
 
 const items = ["Profile", "Preferences", "Settings", "Sign out"];
 
@@ -12,6 +14,8 @@ export function ProfileMenu() {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const user = getCurrentUserProfile();
+  const signOut = useAuthStore((state) => state.signOut);
+  const disconnectLocalAws = useCloudAccountStore((state) => state.disconnect);
 
   const handleSelect = (item: string) => {
     setOpen(false);
@@ -21,6 +25,12 @@ export function ProfileMenu() {
     }
     if (item === "Preferences" || item === "Settings") {
       router.push("/settings");
+    }
+    if (item === "Sign out") {
+      void signOut().finally(() => {
+        disconnectLocalAws();
+        router.push("/login");
+      });
     }
   };
 

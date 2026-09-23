@@ -15,8 +15,10 @@ import com.cloudcostai.aws.model.AwsRecommendation;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.repository.AwsRecommendationRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.service.AwsCostAnalyticsService;
 import com.cloudcostai.billing.repository.BudgetRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -37,15 +39,26 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
     private final AwsBillingRepository billingRepository;
     private final AwsRecommendationRepository recommendationRepository;
     private final BudgetRepository budgetRepository;
+    private final AwsBillingSourceResolver billingSourceResolver;
+
+    @Autowired
+    public AwsCostAnalyticsServiceImpl(AwsConnectionSessionService sessionService,
+                                       AwsBillingRepository billingRepository,
+                                       AwsRecommendationRepository recommendationRepository,
+                                       BudgetRepository budgetRepository,
+                                       AwsBillingSourceResolver billingSourceResolver) {
+        this.sessionService = sessionService;
+        this.billingRepository = billingRepository;
+        this.recommendationRepository = recommendationRepository;
+        this.budgetRepository = budgetRepository;
+        this.billingSourceResolver = billingSourceResolver;
+    }
 
     public AwsCostAnalyticsServiceImpl(AwsConnectionSessionService sessionService,
                                        AwsBillingRepository billingRepository,
                                        AwsRecommendationRepository recommendationRepository,
                                        BudgetRepository budgetRepository) {
-        this.sessionService = sessionService;
-        this.billingRepository = billingRepository;
-        this.recommendationRepository = recommendationRepository;
-        this.budgetRepository = budgetRepository;
+        this(sessionService, billingRepository, recommendationRepository, budgetRepository, null);
     }
 
     @Override
@@ -57,19 +70,17 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
     public AwsCostAnalyticsResponse getAnalytics(String connectionToken, String period, String month) {
         var session = sessionService.getSession(connectionToken);
         DateRange selected = dateRange(period, month);
-        String currency = billingRepository.findCurrencies(session.accountId()).stream().findFirst().orElse(DEFAULT_CURRENCY);
-        List<AwsBilling> rows = billingRepository.findByAwsAccountId(session.accountId()).stream()
-                .filter(row -> inRange(row, selected.start(), selected.end()))
-                .toList();
-        List<AwsBilling> previousRows = billingRepository.findByAwsAccountId(session.accountId()).stream()
-                .filter(row -> inRange(row, selected.start().minusMonths(1), selected.start()))
-                .toList();
-        if (rows.isEmpty()) return noData(session.accountId(), selected, currency, previousRows.isEmpty() ? null : sum(previousRows));
-        return available(session.accountId(), selected, currency, rows, previousRows);
+        YearMonth selectedMonth = YearMonth.from(selected.start());
+        String source = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), selectedMonth).dataSource();
+        List<AwsBilling> rows = sourceRows(session.accountId(), selectedMonth, selected.start(), selected.end());
+        List<AwsBilling> previousRows = sourceRows(session.accountId(), selectedMonth.minusMonths(1), selected.start().minusMonths(1), selected.start());
+        String currency = rows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse(DEFAULT_CURRENCY);
+        if (rows.isEmpty()) return noData(session.accountId(), selected, currency, previousRows.isEmpty() ? null : sum(previousRows), source);
+        return available(session.accountId(), selected, currency, rows, previousRows, source);
     }
 
     private AwsCostAnalyticsResponse available(String accountId, DateRange selected, String currency,
-                                               List<AwsBilling> rows, List<AwsBilling> previousRows) {
+                                               List<AwsBilling> rows, List<AwsBilling> previousRows, String source) {
         BigDecimal total = sum(rows);
         BigDecimal previous = previousRows.isEmpty() ? null : sum(previousRows);
         BigDecimal difference = previous == null ? null : total.subtract(previous).setScale(2, RoundingMode.HALF_UP);
@@ -87,14 +98,14 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
         return new AwsCostAnalyticsResponse(accountId, currency, displayPeriod(selected),
                 new Summary(money(total), money(total), dailyAverage(total, days.size()), null, null, previous, difference, change), trend, daily, serviceCosts, regionCosts,
                 drivers, anomalies(trend), budget(accountId, selected, rows, currency), savings(accountId, currency), "AVAILABLE",
-                "AWS_CUR_2_0_POSTGRESQL", selected.start().toString(), selected.end().toString(), lastUpdated, null);
+                source, selected.start().toString(), selected.end().toString(), lastUpdated, null);
     }
 
-    private AwsCostAnalyticsResponse noData(String accountId, DateRange selected, String currency, BigDecimal previous) {
+    private AwsCostAnalyticsResponse noData(String accountId, DateRange selected, String currency, BigDecimal previous, String source) {
         return new AwsCostAnalyticsResponse(accountId, currency, displayPeriod(selected),
                 new Summary(null, null, null, null, null, previous, null, null), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 budget(accountId, selected, List.of(), currency), savings(accountId, currency), "NO_CUR_DATA",
-                "AWS_CUR_2_0_POSTGRESQL", selected.start().toString(), selected.end().toString(), null,
+                source, selected.start().toString(), selected.end().toString(), null,
                 previous == null ? "No CUR data available for the selected billing period." : "No CUR data available for the selected billing period; previous-period data exists.");
     }
 
@@ -110,6 +121,11 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
         BigDecimal total = recommendationRepository.findByAwsAccountIdOrderByCreatedAtDesc(accountId).stream()
                 .map(AwsRecommendation::getPotentialSavings).filter(value -> value != null && value.signum() > 0).reduce(BigDecimal.ZERO, BigDecimal::add);
         return total.signum() == 0 ? new PotentialSavings(false, null) : new PotentialSavings(true, money(total));
+    }
+
+    private List<AwsBilling> sourceRows(String accountId, YearMonth month, LocalDate start, LocalDate end) {
+        if (billingSourceResolver != null) return billingSourceResolver.rows(accountId, billingSourceResolver.resolve(accountId, month).dataSource(), start, end);
+        return billingRepository.findByAwsAccountId(accountId).stream().filter(row -> inRange(row, start, end)).toList();
     }
 
     private Map<String, BigDecimal> totals(List<AwsBilling> rows, java.util.function.Function<AwsBilling, String> key) {

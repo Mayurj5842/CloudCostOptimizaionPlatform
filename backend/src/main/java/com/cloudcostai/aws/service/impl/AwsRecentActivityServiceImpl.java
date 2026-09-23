@@ -97,7 +97,7 @@ public class AwsRecentActivityServiceImpl implements AwsRecentActivityService {
                             "Lambda function updated",
                             function.functionName(),
                             function.toString().contains("arn") ? session.region() : session.region(),
-                            Instant.parse(function.lastModified())
+                            parseLambdaTimestamp(function.lastModified())
                     ))
                     .forEach(activities::add);
 
@@ -108,6 +108,7 @@ public class AwsRecentActivityServiceImpl implements AwsRecentActivityService {
         return new AwsRecentActivityResponse(
                 activities.stream()
                         .filter(Objects::nonNull)
+                        .filter(activity -> activity.timestamp() != null)
                         .sorted(Comparator.comparing(AwsRecentActivityResponse.Activity::timestamp).reversed())
                         .limit(Math.max(1, limit))
                         .toList()
@@ -127,4 +128,16 @@ public class AwsRecentActivityServiceImpl implements AwsRecentActivityService {
             default -> "EC2 instance updated";
         };
     }
+
+        private Instant parseLambdaTimestamp(String value) {
+                try {
+                        return Instant.parse(value);
+                } catch (RuntimeException exception) {
+                        try {
+                                return java.time.OffsetDateTime.parse(value, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ")).toInstant();
+                        } catch (RuntimeException ignored) {
+                                return null;
+                        }
+                }
+        }
 }

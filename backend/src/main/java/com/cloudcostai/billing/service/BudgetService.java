@@ -2,6 +2,7 @@ package com.cloudcostai.billing.service;
 
 import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.billing.dto.AlertResponse;
 import com.cloudcostai.billing.dto.BudgetRequest;
 import com.cloudcostai.billing.dto.BudgetResponse;
@@ -26,12 +27,15 @@ public class BudgetService {
     private final BudgetRepository budgetRepository;
     private final BudgetAlertRepository budgetAlertRepository;
     private final AwsBillingRepository awsBillingRepository;
+    private final AwsBillingSourceResolver billingSourceResolver;
 
     public BudgetService(BudgetRepository budgetRepository, BudgetAlertRepository budgetAlertRepository,
-                         AwsBillingRepository awsBillingRepository) {
+                         AwsBillingRepository awsBillingRepository,
+                         AwsBillingSourceResolver billingSourceResolver) {
         this.budgetRepository = budgetRepository;
         this.budgetAlertRepository = budgetAlertRepository;
         this.awsBillingRepository = awsBillingRepository;
+        this.billingSourceResolver = billingSourceResolver;
     }
 
     public List<BudgetResponse> getBudgetsForAccount(String awsAccountId) {
@@ -252,9 +256,8 @@ public class BudgetService {
     }
 
     private BigDecimal getActualSpend(String awsAccountId, LocalDate startDate, LocalDate endDate) {
-        List<AwsBilling> rows = awsBillingRepository.findByAwsAccountId(awsAccountId).stream()
-            .filter(row -> billingDate(row) != null && !billingDate(row).isBefore(startDate) && billingDate(row).isBefore(endDate))
-            .toList();
+        YearMonth month = YearMonth.from(startDate);
+        List<AwsBilling> rows = billingSourceResolver.rows(awsAccountId, billingSourceResolver.resolve(awsAccountId, month).dataSource(), startDate, endDate);
         if (rows == null || rows.isEmpty()) {
             return null;
         }

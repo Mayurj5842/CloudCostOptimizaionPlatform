@@ -87,19 +87,16 @@ public class AwsConnectionController {
         }
 
         @GetMapping("/connection")
-        public ResponseEntity<ApiResponse<AwsConnectionResponse>> getConnection() {
-                var account = awsAccountRepository
-                                .findFirstByProviderAndConnectionStatusOrderByUpdatedAtDesc("AWS", "CONNECTED");
+        public ResponseEntity<ApiResponse<AwsConnectionResponse>> getConnection(
+                        @RequestHeader("X-AWS-Connection-Token") String connectionToken) {
+                var session = sessionService.getSession(connectionToken);
+                var account = awsAccountRepository.findByAccountIdAndProviderAndConnectionStatus(
+                                session.accountId(), "AWS", "CONNECTED");
                 if (account.isEmpty()) {
                         return ResponseEntity.ok(new ApiResponse<>(true, "No AWS account is connected", null));
                 }
 
                 AwsAccount connectedAccount = account.get();
-                String connectionToken = sessionService.findTokenByAccountId(connectedAccount.getAccountId()).orElse(null);
-            if (connectionToken == null) {
-                            // A missing session is not an explicit user disconnect.
-                    return ResponseEntity.ok(new ApiResponse<>(true, "No AWS account is connected", null));
-            }
 
                 AwsConnectionResponse response = new AwsConnectionResponse(
                                 connectedAccount.getAccountId(),
@@ -116,9 +113,11 @@ public class AwsConnectionController {
         }
 
         @PostMapping("/disconnect")
-        public ResponseEntity<ApiResponse<Void>> disconnect() {
+        public ResponseEntity<ApiResponse<Void>> disconnect(
+                        @RequestHeader("X-AWS-Connection-Token") String connectionToken) {
+                var session = sessionService.getSession(connectionToken);
                 awsAccountRepository
-                                .findFirstByProviderAndConnectionStatusOrderByUpdatedAtDesc("AWS", "CONNECTED")
+                                .findByAccountIdAndProviderAndConnectionStatus(session.accountId(), "AWS", "CONNECTED")
                                 .ifPresent(account -> {
                                         account.markDisconnected();
                                         awsAccountRepository.save(account);

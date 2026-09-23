@@ -8,6 +8,8 @@ import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.repository.AwsRecommendationRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsRecommendationService;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,13 +30,17 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
     private final AwsConnectionSessionService sessionService;
     private final AwsBillingRepository billingRepository;
     private final AwsRecommendationRepository recommendationRepository;
+    private final AwsBillingSourceResolver billingSourceResolver;
 
+    @Autowired
     public AwsRecommendationServiceImpl(AwsConnectionSessionService sessionService,
                                         AwsBillingRepository billingRepository,
-                                        AwsRecommendationRepository recommendationRepository) {
+                                        AwsRecommendationRepository recommendationRepository,
+                                        AwsBillingSourceResolver billingSourceResolver) {
         this.sessionService = sessionService;
         this.billingRepository = billingRepository;
         this.recommendationRepository = recommendationRepository;
+        this.billingSourceResolver = billingSourceResolver;
     }
 
     @Override
@@ -52,8 +58,9 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
     public AwsRecommendationResponse getRecommendations(String connectionToken, String month) {
         var session = sessionService.getSession(connectionToken);
         YearMonth selected = parseMonth(month, YearMonth.now());
-        List<AwsBilling> rows = billingRepository.findByAwsAccountId(session.accountId()).stream()
-                .filter(row -> inRange(row, selected.atDay(1), selected.plusMonths(1).atDay(1))).toList();
+        List<AwsBilling> rows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId()).stream()
+            .filter(row -> inRange(row, selected.atDay(1), selected.plusMonths(1).atDay(1))).toList()
+            : billingSourceResolver.rows(session.accountId(), billingSourceResolver.resolve(session.accountId(), selected).dataSource(), selected.atDay(1), selected.plusMonths(1).atDay(1));
         String currency = rows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse("USD");
         if (rows.isEmpty()) return response(session.accountId(), currency, List.of(), selected, "NO_DATA", "No CUR billing data is available for this month.", null);
         return response(session.accountId(), currency, recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(session.accountId(), selected.toString()), selected, "SUCCESS", null, sum(rows));
@@ -62,18 +69,7 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
     @Override
     @Transactional
     public AwsRecommendationResponse generateRecommendations(String connectionToken) {
-        var session = sessionService.getSession(connectionToken);
-        List<AwsBilling> rows = billingRepository.findByAwsAccountId(session.accountId());
-        LocalDate end = LocalDate.now().plusDays(1);
-        List<RecommendationDraft> drafts = analyze(rows, end.minusDays(30), end, end.minusDays(60));
-        for (RecommendationDraft draft : drafts) {
-            AwsRecommendation entity = recommendationRepository.findByAwsAccountIdAndRecommendationKey(session.accountId(), draft.key())
-                    .orElseGet(() -> new AwsRecommendation(session.accountId(), draft.key(), draft.title(), draft.category(), draft.severity(), draft.service(), draft.resourceId(), draft.region(), draft.currentCost(), draft.reason(), draft.recommendation(), draft.action(), draft.potentialSavings(), "New"));
-            entity.update(draft.title(), draft.category(), draft.severity(), draft.service(), draft.resourceId(), draft.region(), draft.currentCost(), draft.reason(), draft.recommendation(), draft.action(), draft.potentialSavings(), entity.getStatus());
-            recommendationRepository.save(entity);
-        }
-        String currency = rows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse("USD");
-        return response(session.accountId(), currency, recommendationRepository.findByAwsAccountIdOrderByCreatedAtDesc(session.accountId()));
+        return generateRecommendations(connectionToken, YearMonth.now().toString());
     }
 
     @Override
@@ -81,9 +77,10 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
     public AwsRecommendationResponse generateRecommendations(String connectionToken, String month) {
         var session = sessionService.getSession(connectionToken);
         YearMonth selected = parseMonth(month, YearMonth.now());
-        List<AwsBilling> rows = billingRepository.findByAwsAccountId(session.accountId());
         LocalDate start = selected.atDay(1);
         LocalDate end = selected.plusMonths(1).atDay(1);
+        List<AwsBilling> rows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId()).stream().filter(row -> inRange(row, start, end)).toList()
+            : billingSourceResolver.rows(session.accountId(), billingSourceResolver.resolve(session.accountId(), selected).dataSource(), start, end);
         List<AwsBilling> currentRows = rows.stream().filter(row -> inRange(row, start, end)).toList();
         String currency = currentRows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse("USD");
         if (currentRows.isEmpty()) return response(session.accountId(), currency, List.of(), selected, "NO_DATA", "No CUR billing data is available for this month.", null);

@@ -62,10 +62,7 @@ public class DefaultAwsClientFactory implements AwsClientFactory {
 
         @Override
         public CostExplorerClient createCostExplorerClient(String accessKey, String secretKey) {
-                        // COST EXPLORER TEMPORARILY DISABLED
-                        // CLOUDCOSTAI USES CUR 2.0 + S3 FOR BILLING DATA
-                        // DO NOT CALL AWS COST EXPLORER FROM DASHBOARD/BILLING FLOW
-                        throw new IllegalStateException("AWS Cost Explorer is permanently disabled for CloudCostAI billing.");
+                return CostExplorerClient.builder().region(Region.US_EAST_1).credentialsProvider(credentials(accessKey, secretKey)).build();
         }
 
         @Override

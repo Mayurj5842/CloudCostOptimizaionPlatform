@@ -2,17 +2,33 @@
 
 import { useState } from "react";
 import StatCard from "./stat-card";
-import { DollarSign, LoaderCircle, PiggyBank, Server, Wallet, X } from "lucide-react";
+import { AlertTriangle, DollarSign, LoaderCircle, PiggyBank, Server, Wallet, X } from "lucide-react";
 import { useAwsDashboard } from "./use-aws-dashboard";
-import { fetchAwsResources, type AwsResourceResponse } from "@/services/aws-connection";
+import { fetchAwsResources, fetchLiveAwsCost, type AwsResourceResponse } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const icons = [DollarSign, Server, PiggyBank, Wallet] as const;
 
 export default function StatsGrid({ month }: { month: string }) {
   const dashboard = useAwsDashboard(month);
   const connectionToken = useCloudAccountStore((state) => state.connectionToken);
+  const queryClient = useQueryClient();
+  const liveCost = useMutation({
+    mutationFn: () => fetchLiveAwsCost(connectionToken as string, month),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["aws-dashboard", connectionToken, month] }),
+        queryClient.invalidateQueries({ queryKey: ["aws-cost-trend", connectionToken] }),
+        queryClient.invalidateQueries({ queryKey: ["aws-service-distribution", connectionToken] }),
+        queryClient.invalidateQueries({ queryKey: ["aws-cost-analytics"], exact: false }),
+        queryClient.invalidateQueries({ queryKey: ["aws-report"], exact: false }),
+        queryClient.invalidateQueries({ queryKey: ["aws-bill-summary"], exact: false }),
+        queryClient.invalidateQueries({ queryKey: ["aws-insights"], exact: false }),
+      ]);
+    },
+    retry: false,
+  });
   const [isResourcesOpen, setIsResourcesOpen] = useState(false);
   const resources = useQuery({
     queryKey: ["aws-resources", connectionToken],
@@ -49,7 +65,18 @@ export default function StatsGrid({ month }: { month: string }) {
   ];
 
   return (
-    <section className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4">
+    <>
+      <section className="mb-4 rounded-lg border border-border bg-card p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div><p className="text-sm font-medium">Billing Source</p><p className="text-xs text-muted-foreground">CUR 2.0 is the default. Live AWS Cost is fetched only when requested.</p></div>
+          <button className="rounded-md border border-border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60" disabled={liveCost.isPending || !connectionToken} onClick={() => liveCost.mutate()} type="button">{liveCost.isPending ? "Fetching live cost..." : "Fetch Live AWS Cost"}</button>
+        </div>
+        {liveCost.isError && <p className="mt-3 flex items-center gap-2 text-sm text-destructive"><AlertTriangle className="size-4" />{liveCost.error instanceof Error ? liveCost.error.message : "AWS Cost Explorer could not fetch live cost data."}</p>}
+        {liveCost.data?.status === "NO_DATA" && <p className="mt-3 text-sm text-muted-foreground">No live AWS cost data is available for {month}.</p>}
+        {liveCost.data?.status === "SUCCESS" && <div className="mt-3 text-sm"><p><strong>Live AWS cost:</strong> {formatCurrency(liveCost.data.cost ?? 0, liveCost.data.currency)}</p><p className="text-xs text-muted-foreground">{liveCost.data.billingPeriodStart} to {liveCost.data.billingPeriodEnd} · Fetched {new Date(liveCost.data.fetchedAt).toLocaleString()} · Data Source: AWS Cost Explorer</p><div className="mt-3 grid gap-4 border-t border-border pt-2 sm:grid-cols-2"><div className="space-y-1"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Service</p>{liveCost.data.services.map((item) => <div className="flex justify-between gap-3 text-xs" key={item.service}><span>{item.service}</span><span>{formatCurrency(item.cost, item.currency)}</span></div>)}</div><div className="space-y-1"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Region</p>{liveCost.data.regions.map((item) => <div className="flex justify-between gap-3 text-xs" key={item.region}><span>{item.region}</span><span>{formatCurrency(item.cost, item.currency)}</span></div>)}</div></div></div>}
+        <p className="mt-2 text-xs text-warning">AWS Cost Explorer API usage may incur AWS charges.</p>
+      </section>
+      <section className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4">
       {stats.map((stat, index) => (
         <StatCard
           key={stat.title}
@@ -69,7 +96,8 @@ export default function StatsGrid({ month }: { month: string }) {
         />
       ))}
       {isResourcesOpen && <ActiveResourcesDialog resources={resources} onClose={() => setIsResourcesOpen(false)} />}
-    </section>
+      </section>
+    </>
   );
 }
 
@@ -83,6 +111,11 @@ function ActiveResourcesDialog({
   const data = resources.data;
   const activeEc2 = data?.ec2Instances.filter((item) => item.state?.toLowerCase() === "running") ?? [];
   const activeRds = data?.rdsDatabases.filter((item) => item.status?.toLowerCase() === "available") ?? [];
+  const activeLambda = data?.lambdaFunctions.filter((item) => item.state?.toLowerCase() === "active") ?? [];
+  const activeEbs = data?.ebsVolumes.filter((item) => item.attachedInstanceId && item.state?.toLowerCase() === "in-use") ?? [];
+  const activeVpcs = data?.vpcs.filter((item) => item.state?.toLowerCase() === "available") ?? [];
+  const activeSecurityGroups = data?.securityGroups.filter((item) => Boolean(item.vpcId)) ?? [];
+  const activeS3 = data?.s3Buckets ?? [];
   const activeCount = data?.summary.activeResources ?? 0;
 
   return (
@@ -105,13 +138,14 @@ function ActiveResourcesDialog({
         {resources.isLoading && <div className="flex items-center justify-center py-12 text-sm text-muted-foreground"><LoaderCircle className="mr-2 size-4 animate-spin" />Fetching active resources...</div>}
         {resources.isError && <p className="py-12 text-center text-sm text-destructive">Unable to fetch active resources. Please verify the AWS connection.</p>}
         {data && <div className="mt-6 space-y-6">
-          <ActiveResourceGroup title="EC2" count={activeEc2.length} items={activeEc2.map((item) => ({ name: item.name || "Running EC2 instance", details: [`Instance ID: ${item.instanceId}`, `Region: ${item.region}`] }))} />
-          <ActiveResourceGroup title="RDS" count={activeRds.length} items={activeRds.map((item) => ({ name: `${item.engine} database`, details: [`DB identifier: ${item.identifier}`, `Region: ${item.region}`] }))} />
-          <ActiveResourceGroup title="Lambda" count={data.lambdaFunctions.length} items={data.lambdaFunctions.map((item) => ({ name: "Active Lambda function", details: [`Function: ${item.functionName}`, `Region: ${item.region}`] }))} />
-          <ActiveResourceGroup title="S3" count={data.s3Buckets.length} items={data.s3Buckets.map((item) => ({ name: "Active S3 bucket", details: [`Bucket: ${item.bucketName}`, `Region: ${item.region}`] }))} />
-          <ActiveResourceGroup title="EBS" count={data.ebsVolumes.length} items={data.ebsVolumes.map((item) => ({ name: `${item.volumeType} volume`, details: [`Volume ID: ${item.volumeId}`, `${item.size} GiB`, item.attachedInstanceId ? `Attached to: ${item.attachedInstanceId}` : "Unattached"] }))} />
-          <ActiveResourceGroup title="VPC" count={data.vpcs.length} items={data.vpcs.map((item) => ({ name: item.vpcId, details: [`CIDR: ${item.cidrBlock}`, `State: ${item.state}`, `Region: ${item.region}`] }))} />
-          <ActiveResourceGroup title="Security groups" count={data.securityGroups.length} items={data.securityGroups.map((item) => ({ name: item.groupName || item.groupId, details: [`Group ID: ${item.groupId}`, `VPC: ${item.vpcId || "None"}`] }))} />
+          {activeEc2.length > 0 && <ActiveResourceGroup title="EC2" count={activeEc2.length} items={activeEc2.map((item) => ({ name: item.name || "Running EC2 instance", details: [`Instance ID: ${item.instanceId}`, `Region: ${item.region}`] }))} />}
+          {activeRds.length > 0 && <ActiveResourceGroup title="RDS" count={activeRds.length} items={activeRds.map((item) => ({ name: `${item.engine || "RDS"} database`, details: [`DB identifier: ${item.identifier}`, `Region: ${item.region}`] }))} />}
+          {activeLambda.length > 0 && <ActiveResourceGroup title="Lambda" count={activeLambda.length} items={activeLambda.map((item) => ({ name: item.functionName, details: [`Runtime: ${item.runtime || "Not available"}`, `Region: ${item.region}`] }))} />}
+          {activeS3.length > 0 && <ActiveResourceGroup title="S3" count={activeS3.length} items={activeS3.map((item) => ({ name: item.bucketName, details: ["Bucket available", `Region: ${item.region || "Not available"}`] }))} />}
+          {activeEbs.length > 0 && <ActiveResourceGroup title="EBS" count={activeEbs.length} items={activeEbs.map((item) => ({ name: `${item.volumeType || "EBS"} volume`, details: [`Volume ID: ${item.volumeId}`, `${item.size} GiB`, `Attached to: ${item.attachedInstanceId}`] }))} />}
+          {activeVpcs.length > 0 && <ActiveResourceGroup title="VPC" count={activeVpcs.length} items={activeVpcs.map((item) => ({ name: item.name || item.vpcId, details: [`CIDR: ${item.cidrBlock || "Not available"}`, `Region: ${item.region}`] }))} />}
+          {activeSecurityGroups.length > 0 && <ActiveResourceGroup title="Security groups" count={activeSecurityGroups.length} items={activeSecurityGroups.map((item) => ({ name: item.groupName || item.groupId, details: [`Group ID: ${item.groupId}`, `VPC: ${item.vpcId}`] }))} />}
+          {activeEc2.length + activeRds.length + activeLambda.length + activeS3.length + activeEbs.length + activeVpcs.length + activeSecurityGroups.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No active resources.</p>}
         </div>}
       </div>
     </div>

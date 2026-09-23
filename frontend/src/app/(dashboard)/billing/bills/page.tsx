@@ -47,7 +47,7 @@ export default function BillsPage() {
         <div className="grid gap-6 md:grid-cols-2">
           <InfoRow label="Account ID" value={billQuery.data.accountId} />
           <InfoRow label="Billing period" value={formatBillingPeriod(billQuery.data.billingPeriod.start, billQuery.data.billingPeriod.end)} />
-          <InfoRow label="Bill status" value={billQuery.data.billStatus === "COST_EXPLORER_DISABLED" ? "Cost Explorer temporarily disabled" : billQuery.data.billStatus} />
+          <InfoRow label="Bill status" value={billQuery.data.billStatus === "NO_CUR_DATA" ? "No CUR data available" : billQuery.data.billStatus} />
           <InfoRow label="Service provider" value={billQuery.data.serviceProvider} />
         </div>
         <div className="grid gap-6 md:grid-cols-2">
@@ -71,7 +71,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 function LoadingState() {
-  return <Card><CardContent className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center"><Loader2 className="size-10 animate-spin text-primary" /><h1 className="mt-5 text-xl font-semibold">Loading AWS bill summary...</h1><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Fetching billing data from AWS Cost Explorer.</p></CardContent></Card>;
+  return <Card><CardContent className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center"><Loader2 className="size-10 animate-spin text-primary" /><h1 className="mt-5 text-xl font-semibold">Loading AWS bill summary...</h1><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Loading billing data from the PostgreSQL CUR import.</p></CardContent></Card>;
 }
 
 function ErrorState({ onRetry }: { onRetry: () => void }) {
