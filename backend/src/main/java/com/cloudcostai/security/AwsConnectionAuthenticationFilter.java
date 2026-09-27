@@ -29,6 +29,8 @@ public class AwsConnectionAuthenticationFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
         return path.startsWith("/api/auth/")
+            || "/api/notifications".equals(path)
+            || path.startsWith("/api/notifications/")
             || "/api/aws/connect".equals(path)
                 || "/api/aws/connection".equals(path)
                 || "/api/aws/disconnect".equals(path)

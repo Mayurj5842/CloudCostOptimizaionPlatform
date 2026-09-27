@@ -71,12 +71,30 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
         var session = sessionService.getSession(connectionToken);
         DateRange selected = dateRange(period, month);
         YearMonth selectedMonth = YearMonth.from(selected.start());
-        String source = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), selectedMonth).dataSource();
-        List<AwsBilling> rows = sourceRows(session.accountId(), selectedMonth, selected.start(), selected.end());
+        AwsBillingSourceResolver.ResolvedBilling selectedBilling = billingSourceResolver == null ? null
+            : billingSourceResolver.resolveForDisplay(session.accountId(), selected.start(), selected.end());
+        String source = selectedBilling == null ? "CUR_2_0" : selectedBilling.dataSource();
+        List<AwsBilling> rows = selectedBilling == null
+            ? sourceRows(session.accountId(), selectedMonth, selected.start(), selected.end()) : selectedBilling.rows();
         List<AwsBilling> previousRows = sourceRows(session.accountId(), selectedMonth.minusMonths(1), selected.start().minusMonths(1), selected.start());
         String currency = rows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse(DEFAULT_CURRENCY);
         if (rows.isEmpty()) return noData(session.accountId(), selected, currency, previousRows.isEmpty() ? null : sum(previousRows), source);
         return available(session.accountId(), selected, currency, rows, previousRows, source);
+    }
+
+    @Override
+    public AwsCostAnalyticsResponse getAnalyticsForAccount(String accountId, String period, String month) {
+        DateRange selected = dateRange(period, month);
+        YearMonth selectedMonth = YearMonth.from(selected.start());
+        AwsBillingSourceResolver.ResolvedBilling selectedBilling = billingSourceResolver == null ? null
+            : billingSourceResolver.resolveForDisplay(accountId, selected.start(), selected.end());
+        String source = selectedBilling == null ? "CUR_2_0" : selectedBilling.dataSource();
+        List<AwsBilling> rows = selectedBilling == null
+            ? sourceRows(accountId, selectedMonth, selected.start(), selected.end()) : selectedBilling.rows();
+        List<AwsBilling> previousRows = sourceRows(accountId, selectedMonth.minusMonths(1), selected.start().minusMonths(1), selected.start());
+        String currency = rows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse(DEFAULT_CURRENCY);
+        if (rows.isEmpty()) return noData(accountId, selected, currency, previousRows.isEmpty() ? null : sum(previousRows), source);
+        return available(accountId, selected, currency, rows, previousRows, source);
     }
 
     private AwsCostAnalyticsResponse available(String accountId, DateRange selected, String currency,
@@ -124,7 +142,7 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
     }
 
     private List<AwsBilling> sourceRows(String accountId, YearMonth month, LocalDate start, LocalDate end) {
-        if (billingSourceResolver != null) return billingSourceResolver.rows(accountId, billingSourceResolver.resolve(accountId, month).dataSource(), start, end);
+        if (billingSourceResolver != null) return billingSourceResolver.resolveForDisplay(accountId, start, end).rows();
         return billingRepository.findByAwsAccountId(accountId).stream().filter(row -> inRange(row, start, end)).toList();
     }
 

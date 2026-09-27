@@ -37,6 +37,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/me", "/api/auth/logout").permitAll()
+                        .requestMatchers("/api/notifications/**").permitAll()
                         .requestMatchers("/api/aws/connect").permitAll()
                         .requestMatchers("/api/aws/connection").permitAll()
                         .requestMatchers("/api/aws/disconnect").permitAll()

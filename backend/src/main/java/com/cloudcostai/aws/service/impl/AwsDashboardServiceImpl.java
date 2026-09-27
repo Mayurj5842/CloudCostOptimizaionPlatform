@@ -84,12 +84,17 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
     public AwsDashboardChartResponse getCostTrend(String connectionToken, String range, String month) {
         var session = sessionService.getSession(connectionToken);
         ChartRange selected = chartRange(range, selectedMonth(month));
-        List<AwsBilling> billingRows = sourceRows(session.accountId(), selectedMonth(month), selected.start(), selected.end());
+        AwsBillingSourceResolver.ResolvedBilling resolved = billingSourceResolver == null ? null
+            : billingSourceResolver.resolveForDisplay(session.accountId(), selected.start(), selected.end());
+        List<AwsBilling> billingRows = resolved == null
+            ? sourceRows(session.accountId(), selectedMonth(month), selected.start(), selected.end()) : resolved.rows();
         Map<LocalDate, BigDecimal> grouped = billingRows.stream().collect(Collectors.groupingBy(this::billingDate,
             Collectors.reducing(BigDecimal.ZERO, row -> row.getCostAmount() == null ? BigDecimal.ZERO : row.getCostAmount(), BigDecimal::add)));
         BigDecimal total = grouped.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-        String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), selectedMonth(month)).dataSource();
-        return new AwsDashboardChartResponse(session.accountId(), currency(session.accountId()), selected.name(),
+        String dataSource = resolved == null ? "CUR_2_0" : resolved.dataSource();
+        String currency = billingRows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank())
+            .findFirst().orElseGet(() -> currency(session.accountId()));
+        return new AwsDashboardChartResponse(session.accountId(), currency, selected.name(),
             grouped.entrySet().stream().sorted(Map.Entry.comparingByKey()).map(row -> new AwsDashboardChartResponse.CostPoint(row.getKey().toString(), money(row.getValue()))).toList(),
             List.of(), billingRows.isEmpty() ? null : money(total), billingRows.isEmpty() ? "NO_BILLING_DATA" : "AVAILABLE", dataSource);
     }
@@ -99,18 +104,21 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
         var session = sessionService.getSession(connectionToken);
         YearMonth selectedMonth = selectedMonth(month);
         ChartRange selected = chartRange(range, selectedMonth);
-        String dataSource = billingSource(session.accountId(), selectedMonth);
-        List<AwsBillingRepository.ServiceDistributionProjection> grouped = billingRepository.findServiceDistribution(
-                session.accountId(), dataSource, selected.start(), selected.end());
-        BigDecimal total = billingRepository.sumCostBySource(session.accountId(), dataSource, selected.start(), selected.end());
-        List<AwsDashboardChartResponse.ServicePoint> services = grouped.stream()
-            .map(row -> new AwsDashboardChartResponse.ServicePoint(row.getService(), chartMoney(row.getCost()), percentage(row.getCost(), total))).toList();
+        AwsBillingSourceResolver.ResolvedBilling resolved = billingSourceResolver == null ? null
+            : billingSourceResolver.resolveForDisplay(session.accountId(), selected.start(), selected.end());
+        List<AwsBilling> rows = resolved == null
+            ? sourceRows(session.accountId(), selectedMonth, selected.start(), selected.end()) : resolved.rows();
+        String dataSource = resolved == null ? "CUR_2_0" : resolved.dataSource();
+        Map<String, BigDecimal> grouped = rows.stream().filter(row -> row.getCostAmount() != null)
+            .collect(Collectors.groupingBy(row -> row.getServiceName() == null || row.getServiceName().isBlank()
+                    ? "Others" : row.getServiceName(),
+                Collectors.reducing(BigDecimal.ZERO, AwsBilling::getCostAmount, BigDecimal::add)));
+        BigDecimal total = grouped.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<AwsDashboardChartResponse.ServicePoint> services = grouped.entrySet().stream()
+            .map(row -> new AwsDashboardChartResponse.ServicePoint(row.getKey(), chartMoney(row.getValue()), percentage(row.getValue(), total)))
+            .sorted((left, right) -> right.cost().compareTo(left.cost())).toList();
         return new AwsDashboardChartResponse(session.accountId(), currency(session.accountId()), selected.name(), List.of(), services,
             grouped.isEmpty() ? null : chartMoney(total), grouped.isEmpty() ? "NO_BILLING_DATA" : "AVAILABLE", dataSource);
-    }
-
-    private String billingSource(String accountId, YearMonth month) {
-        return billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(accountId, month).dataSource();
     }
 
     private AwsDashboardResponse databaseDashboard(String accountId, AwsResourceResponse resources, YearMonth selectedMonth) {
@@ -134,9 +142,10 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
             ? new AwsDashboardResponse.Savings(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(accountId, selectedMonth.toString()).stream().map(item -> item.getPotentialSavings()).filter(value -> value != null && value.signum() > 0).reduce(BigDecimal.ZERO, BigDecimal::add), rowCurrency, selectedMonth.toString()) : null;
         AwsDashboardResponse.BudgetUsage budget = budgetUsage(accountId, selectedMonth, currentCost, rowCurrency);
         String status = current.isEmpty() ? "NO_DATA" : "AVAILABLE";
-        String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(accountId, selectedMonth).dataSource();
+        String dataSource = billingSourceResolver == null ? "CUR_2_0"
+                : billingSourceResolver.resolveForDisplay(accountId, monthStart, nextMonth).dataSource();
         return new AwsDashboardResponse(accountId, spend, new AwsDashboardResponse.ActiveResources(resources.summary().activeResources()), savings, budget, trend, distribution,
-            new AwsDashboardResponse.Billing(status, dataSource, current.isEmpty() ? null : selectedMonth.atEndOfMonth().toString(), monthStart.toString(), nextMonth.minusDays(1).toString(), current.isEmpty() ? "No CUR billing rows for the selected month." : null));
+            new AwsDashboardResponse.Billing(status, dataSource, current.isEmpty() ? null : selectedMonth.atEndOfMonth().toString(), monthStart.toString(), nextMonth.minusDays(1).toString(), current.isEmpty() ? "No billing rows for the selected month." : null));
     }
 
     private List<AwsBilling> rowsInRange(List<AwsBilling> rows, LocalDate start, LocalDate end) {
@@ -182,7 +191,7 @@ public class AwsDashboardServiceImpl implements AwsDashboardService {
     }
 
     private List<AwsBilling> sourceRows(String accountId, YearMonth month, LocalDate start, LocalDate end) {
-        if (billingSourceResolver != null) return billingSourceResolver.rows(accountId, billingSourceResolver.resolve(accountId, month).dataSource(), start, end);
+        if (billingSourceResolver != null) return billingSourceResolver.resolveForDisplay(accountId, start, end).rows();
         return billingRepository.findByAwsAccountId(accountId).stream().filter(row -> !billingDate(row).isBefore(start) && billingDate(row).isBefore(end)).toList();
     }
 

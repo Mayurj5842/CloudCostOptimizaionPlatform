@@ -2,16 +2,28 @@ spring:
   application:
     name: cloudcost-ai-backend
 
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS:true}
+
   profiles:
     active: dev
 
 server:
   port: 8080
 
-# COST EXPLORER TEMPORARILY DISABLED
-# DO NOT ENABLE UNTIL BILLING ARCHITECTURE IS UPDATED
-# AWS COST EXPLORER API CALL IS DISABLED TO PREVENT ADDITIONAL COST
+# Live Cost Explorer API calls may incur AWS charges.
 billing:
+  cost-explorer:
+    enabled: true
   sync:
     enabled: ${AWS_BILLING_IMPORT_ENABLED:true}
     interval-hours: ${AWS_BILLING_IMPORT_INTERVAL_HOURS:24}
@@ -26,3 +38,5 @@ aws:
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  mail:
+    from: ${MAIL_FROM:}

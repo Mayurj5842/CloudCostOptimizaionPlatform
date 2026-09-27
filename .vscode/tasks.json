@@ -1,0 +1,77 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Reproduce notification filter issue",
+			"type": "shell",
+			"command": ".\\backend\\mvnw.cmd -f .\\backend\\pom.xml -Dtest=AwsConnectionAuthenticationFilterTest test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$java"
+			]
+		},
+		{
+			"label": "Verify notification filter fix",
+			"type": "shell",
+			"command": ".\\backend\\mvnw.cmd -f .\\backend\\pom.xml -Dtest=AwsConnectionAuthenticationFilterTest test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$java"
+			]
+		},
+		{
+			"label": "Typecheck landing cleanup",
+			"type": "shell",
+			"command": "npm.cmd --prefix frontend exec -- tsc --noEmit -p frontend/tsconfig.json",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "Typecheck auth lifecycle changes",
+			"type": "shell",
+			"command": "npm.cmd --prefix frontend exec -- tsc --noEmit -p frontend/tsconfig.json",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "Typecheck authenticated profile fixes",
+			"type": "shell",
+			"command": "npm.cmd --prefix frontend exec -- tsc --noEmit -p frontend/tsconfig.json",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "Validate resource query key",
+			"type": "shell",
+			"command": "npm.cmd --prefix frontend exec -- tsc --noEmit -p frontend/tsconfig.json",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "Validate CUR-only billing path",
+			"type": "shell",
+			"command": ".\\backend\\mvnw.cmd -f .\\backend\\pom.xml -Dtest=AwsBillingSourceResolverTest,BackendApplicationTests test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$java"
+			]
+		},
+		{
+			"label": "Run CUR-only backend tests",
+			"type": "shell",
+			"command": ".\\backend\\mvnw.cmd -f .\\backend\\pom.xml \"-Dtest=AwsBillingSourceResolverTest,BackendApplicationTests\" test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$java"
+			]
+		}
+	]
+}

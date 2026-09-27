@@ -3,6 +3,7 @@ package com.cloudcostai.aws.service.impl;
 import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.repository.AwsRecommendationRepository;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.billing.repository.BudgetRepository;
 import com.cloudcostai.billing.model.Budget;
@@ -19,6 +20,7 @@ import java.util.Optional;
 import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,7 +34,6 @@ class AwsCostAnalyticsServiceImplTest {
     void selectedAugustUsesExclusiveMonthBoundaryAndPreviousComparison() {
         String account = "123456789012";
         when(sessionService.getSession("token")).thenReturn(session(account));
-        when(billingRepository.findCurrencies(account)).thenReturn(List.of("USD"));
         when(billingRepository.findByAwsAccountId(account)).thenReturn(List.of(
                 row(account, LocalDate.of(2026, 7, 31), "5.00", "July"),
                 row(account, LocalDate.of(2026, 8, 1), "10.00", "EC2"),
@@ -58,7 +59,6 @@ class AwsCostAnalyticsServiceImplTest {
     void nullUsageDateFallsBackToBillingPeriodStart() {
         String account = "123456789012";
         when(sessionService.getSession("token")).thenReturn(session(account));
-        when(billingRepository.findCurrencies(account)).thenReturn(List.of("USD"));
         when(billingRepository.findByAwsAccountId(account)).thenReturn(List.of(rowWithNullUsageDate(account, LocalDate.of(2026, 9, 10), "12.50")));
         when(recommendationRepository.findByAwsAccountIdOrderByCreatedAtDesc(account)).thenReturn(List.of());
         when(budgetRepository.findFirstByAwsAccountIdAndStatusOrderByCreatedAtDesc(account, "ACTIVE")).thenReturn(Optional.empty());
@@ -73,7 +73,6 @@ class AwsCostAnalyticsServiceImplTest {
     void noSelectedMonthDataDoesNotBecomeZero() {
         String account = "123456789012";
         when(sessionService.getSession("token")).thenReturn(session(account));
-        when(billingRepository.findCurrencies(account)).thenReturn(List.of("USD"));
         when(billingRepository.findByAwsAccountId(account)).thenReturn(List.of(row(account, LocalDate.of(2026, 8, 1), "12.50", "EC2")));
         when(recommendationRepository.findByAwsAccountIdOrderByCreatedAtDesc(account)).thenReturn(List.of());
         when(budgetRepository.findFirstByAwsAccountIdAndStatusOrderByCreatedAtDesc(account, "ACTIVE")).thenReturn(Optional.empty());
@@ -85,11 +84,35 @@ class AwsCostAnalyticsServiceImplTest {
         assertThat(response.message()).contains("No CUR data");
     }
 
+        @Test
+        void selectedMonthAnalyticsUsesSavedCostExplorerRowsInsteadOfCur() {
+        String account = "123456789012";
+        AwsBilling augustCur = sourcedRow(account, LocalDate.of(2026, 8, 10), "10.00", "CUR S3", "CUR_2_0");
+        AwsBilling septemberCur = sourcedRow(account, LocalDate.of(2026, 9, 10), "20.00", "CUR EC2", "CUR_2_0");
+        AwsBilling septemberLive = sourcedRow(account, LocalDate.of(2026, 9, 10), "12.50", "Live EC2", "COST_EXPLORER");
+        when(sessionService.getSession("token")).thenReturn(session(account));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(account, "CUR_2_0"))
+            .thenReturn(List.of(augustCur, septemberCur));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(account, "COST_EXPLORER"))
+            .thenReturn(List.of(septemberLive));
+        when(recommendationRepository.findByAwsAccountIdOrderByCreatedAtDesc(account)).thenReturn(List.of());
+        when(budgetRepository.findFirstByAwsAccountIdAndStatusOrderByCreatedAtDesc(account, "ACTIVE")).thenReturn(Optional.empty());
+
+        var service = new AwsCostAnalyticsServiceImpl(sessionService, billingRepository, recommendationRepository,
+            budgetRepository, new AwsBillingSourceResolver(billingRepository));
+        var response = service.getAnalytics("token", "CURRENT_MONTH", "2026-09");
+
+        assertThat(response.dataSource()).isEqualTo("COST_EXPLORER");
+        assertThat(response.summary().totalCost()).isEqualByComparingTo("12.50");
+        assertThat(response.summary().previousPeriodCost()).isEqualByComparingTo("10.00");
+        assertThat(response.serviceCosts()).extracting("name", "cost")
+            .containsExactly(tuple("Live EC2", new BigDecimal("12.50")));
+        }
+
     @Test
     void budgetUsesSelectedMonthSpend() {
         String account = "123456789012";
         when(sessionService.getSession("token")).thenReturn(session(account));
-        when(billingRepository.findCurrencies(account)).thenReturn(List.of("USD"));
         when(billingRepository.findByAwsAccountId(account)).thenReturn(List.of(row(account, LocalDate.of(2026, 8, 10), "25.00", "EC2")));
         when(recommendationRepository.findByAwsAccountIdOrderByCreatedAtDesc(account)).thenReturn(List.of());
         Budget configured = new Budget("user", account, "August", new BigDecimal("100.00"), "USD", "MONTHLY", LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31), "ACTIVE", Arrays.asList(50, 80, 100));
@@ -118,5 +141,10 @@ class AwsCostAnalyticsServiceImplTest {
     private AwsBilling rowWithNullUsageDate(String account, LocalDate billingDate, String cost) {
         return new AwsBilling(account, billingDate, billingDate.plusDays(1), "Amazon EC2", null, BigDecimal.ONE,
                 new BigDecimal(cost), "USD", false, "Amazon EC2", "Usage", "resource", "Usage", null, null, account + billingDate);
+    }
+
+    private AwsBilling sourcedRow(String account, LocalDate date, String cost, String service, String source) {
+        return new AwsBilling(account, date, date, service, "us-east-1", BigDecimal.ONE, new BigDecimal(cost),
+                "USD", false, service, "Usage", null, "Usage", date, date, source + date + service, source);
     }
 }

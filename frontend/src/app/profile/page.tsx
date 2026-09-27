@@ -7,10 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserProfile } from "@/lib/current-user";
 import { AuthGuard } from "@/components/auth/auth-guard";
+import { useAuthStore } from "@/store/auth-store";
 
 export default function ProfilePage() {
   const router = useRouter();
-  const user = getCurrentUserProfile();
+  const authenticatedUser = useAuthStore((state) => state.user);
+  const user = getCurrentUserProfile(authenticatedUser);
 
   const handleGoBack = () => {
     if (typeof window !== "undefined" && window.history.length > 1) {

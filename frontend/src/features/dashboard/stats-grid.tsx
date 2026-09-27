@@ -12,6 +12,7 @@ const icons = [DollarSign, Server, PiggyBank, Wallet] as const;
 
 export default function StatsGrid({ month }: { month: string }) {
   const dashboard = useAwsDashboard(month);
+  const accountId = useCloudAccountStore((state) => state.account?.accountId);
   const connectionToken = useCloudAccountStore((state) => state.connectionToken);
   const queryClient = useQueryClient();
   const liveCost = useMutation({
@@ -31,7 +32,7 @@ export default function StatsGrid({ month }: { month: string }) {
   });
   const [isResourcesOpen, setIsResourcesOpen] = useState(false);
   const resources = useQuery({
-    queryKey: ["aws-resources", connectionToken],
+    queryKey: ["aws-resources", accountId, connectionToken],
     queryFn: () => fetchAwsResources(connectionToken as string),
     enabled: isResourcesOpen && Boolean(connectionToken),
     retry: false,

@@ -8,6 +8,7 @@ import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.repository.AwsRecommendationRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.service.AwsResourceService;
 import com.cloudcostai.billing.repository.BudgetRepository;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,45 @@ class AwsDashboardServiceImplTest {
 
     @Mock
     private BudgetRepository budgetRepository;
+
+        @Test
+        void dashboardAndChartsUseFetchedLiveCostsAndKeepCurTrendHistory() {
+        String accountId = "123456789012";
+        when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+            "access", "secret", "us-east-1", accountId, Instant.now().plusSeconds(600)));
+        AwsBilling augustCur = sourcedRow(accountId, LocalDate.of(2026, 8, 10), "10.00", "CUR S3", "CUR_2_0");
+        AwsBilling septemberCur = sourcedRow(accountId, LocalDate.of(2026, 9, 10), "20.00", "CUR EC2", "CUR_2_0");
+        AwsBilling septemberLive = sourcedRow(accountId, LocalDate.of(2026, 9, 10), "12.50", "Live EC2", "COST_EXPLORER");
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "CUR_2_0"))
+            .thenReturn(List.of(augustCur, septemberCur));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "COST_EXPLORER"))
+            .thenReturn(List.of(septemberLive));
+        when(resourceService.discoverResources("token")).thenReturn(new AwsResourceResponse(accountId, "us-east-1",
+            new AwsResourceResponse.AwsResourceSummary(1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()));
+        when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(accountId, "2026-09"))
+            .thenReturn(List.of());
+
+        AwsDashboardServiceImpl service = new AwsDashboardServiceImpl(sessionService, resourceService, billingRepository,
+            recommendationRepository, budgetRepository, new AwsBillingSourceResolver(billingRepository));
+
+        AwsDashboardResponse dashboard = service.getDashboard("token", "2026-09");
+        var trend = service.getCostTrend("token", "3M", "2026-09");
+        var distribution = service.getServiceDistribution("token", "3M", "2026-09");
+
+        assertThat(dashboard.totalCloudSpend().value()).isEqualByComparingTo("12.50");
+        assertThat(dashboard.billing().dataSource()).isEqualTo("COST_EXPLORER");
+        assertThat(trend.dataSource()).isEqualTo("MIXED");
+        assertThat(trend.points()).extracting("cost").asList().contains(new BigDecimal("10.00"), new BigDecimal("12.50"));
+        assertThat(distribution.totalCost()).isEqualByComparingTo("22.50");
+        assertThat(distribution.services()).extracting("service").containsExactly("Live EC2", "CUR S3");
+        }
+
+        private AwsBilling sourcedRow(String accountId, LocalDate date, String cost, String service, String source) {
+        return new AwsBilling(accountId, date, date, service, "us-east-1", BigDecimal.ONE, new BigDecimal(cost),
+            "USD", false, service, "Usage", null, "Usage", date, date, source + date + service, source);
+        }
+
     @Test
     void totalCloudSpendShowsCurrentMonthBillingData() {
         // Setup

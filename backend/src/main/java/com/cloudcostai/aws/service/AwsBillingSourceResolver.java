@@ -6,7 +6,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 public class AwsBillingSourceResolver {
@@ -21,11 +25,25 @@ public class AwsBillingSourceResolver {
     public ResolvedBilling resolve(String accountId, YearMonth month) {
         LocalDate start = month.atDay(1);
         LocalDate end = month.plusMonths(1).atDay(1);
-        List<AwsBilling> liveRows = rows(accountId, COST_EXPLORER, start, end);
-        if (!liveRows.isEmpty()) {
-            return new ResolvedBilling(COST_EXPLORER, liveRows, start, end);
-        }
         return new ResolvedBilling(CUR, rows(accountId, CUR, start, end), start, end);
+    }
+
+    public ResolvedBilling resolveForDisplay(String accountId, LocalDate start, LocalDate end) {
+        List<AwsBilling> curRows = rows(accountId, CUR, start, end);
+        List<AwsBilling> liveRows = rows(accountId, COST_EXPLORER, start, end);
+        Set<YearMonth> liveMonths = liveRows.stream()
+                .map(this::effectiveDate)
+                .filter(date -> date != null)
+                .map(YearMonth::from)
+                .collect(Collectors.toSet());
+        List<AwsBilling> retainedCurRows = curRows.stream()
+                .filter(row -> effectiveDate(row) == null || !liveMonths.contains(YearMonth.from(effectiveDate(row))))
+                .toList();
+        List<AwsBilling> combinedRows = Stream.concat(retainedCurRows.stream(), liveRows.stream())
+                .sorted(Comparator.comparing(this::effectiveDate))
+                .toList();
+        String source = liveRows.isEmpty() ? CUR : retainedCurRows.isEmpty() ? COST_EXPLORER : "MIXED";
+        return new ResolvedBilling(source, combinedRows, start, end);
     }
 
     public List<AwsBilling> rows(String accountId, String source, LocalDate start, LocalDate end) {

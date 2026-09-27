@@ -6,6 +6,7 @@ import com.cloudcostai.aws.exception.AwsConnectionException;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsLiveCostService;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.costexplorer.CostExplorerClient;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
+@ConditionalOnProperty(name = "billing.cost-explorer.enabled", havingValue = "true")
 public class AwsLiveCostServiceImpl implements AwsLiveCostService {
     private final AwsClientFactory clientFactory;
     private final AwsConnectionSessionService sessionService;

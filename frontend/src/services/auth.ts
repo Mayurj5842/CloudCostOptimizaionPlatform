@@ -26,6 +26,8 @@ export async function logout(token: string) {
 }
 
 export function getAuthError(error: unknown, fallback: string) {
-  if (axios.isAxiosError<{ message?: string }>(error)) return error.response?.data?.message ?? fallback;
+  if (axios.isAxiosError<{ message?: string; detail?: string; title?: string }>(error)) {
+    return error.response?.data?.message ?? error.response?.data?.detail ?? error.response?.data?.title ?? fallback;
+  }
   return error instanceof Error ? error.message : fallback;
 }

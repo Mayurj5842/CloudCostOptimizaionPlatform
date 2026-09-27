@@ -1,6 +1,7 @@
 package com.cloudcostai.aws.service.impl;
 
 import com.cloudcostai.aws.config.AwsClientFactory;
+import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,25 @@ class AwsLiveCostServiceImplTest {
                 .containsExactly(tuple("DIMENSION", "REGION"), tuple("DIMENSION", "SERVICE"));
         verify(costExplorerClient, times(2)).close();
     }
+
+        @Test
+        void fetchPersistsCostExplorerRowsForTheConnectedAccountAndSelectedMonth() {
+                String accountId = "123456789012";
+                when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+                                "access", "secret", "us-east-1", accountId, Instant.now().plusSeconds(300)));
+                when(clientFactory.createCostExplorerClient("access", "secret")).thenReturn(costExplorerClient);
+                when(costExplorerClient.getCostAndUsage(any(GetCostAndUsageRequest.class))).thenReturn(response());
+                when(billingRepository.findByRecordKey(any())).thenReturn(Optional.empty());
+
+                new AwsLiveCostServiceImpl(clientFactory, sessionService, billingRepository).fetch("token", "2026-08");
+
+                var savedRows = org.mockito.ArgumentCaptor.forClass(AwsBilling.class);
+                verify(billingRepository, times(2)).save(savedRows.capture());
+                assertThat(savedRows.getAllValues()).extracting(AwsBilling::getAwsAccountId, AwsBilling::getBillingPeriodStart,
+                                                AwsBilling::getCostAmount, AwsBilling::getDataSource)
+                                .containsExactly(tuple(accountId, java.time.LocalDate.of(2026, 8, 1), new java.math.BigDecimal("12.50"), "COST_EXPLORER"),
+                                                tuple(accountId, java.time.LocalDate.of(2026, 8, 1), new java.math.BigDecimal("2.50"), "COST_EXPLORER"));
+        }
 
     private GetCostAndUsageResponse response() {
         return GetCostAndUsageResponse.builder()
