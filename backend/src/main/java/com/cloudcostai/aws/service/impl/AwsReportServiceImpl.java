@@ -80,10 +80,12 @@ public class AwsReportServiceImpl implements AwsReportService {
         var session = sessionService.getSession(connectionToken);
         DateRange selected = resolvePeriod(month);
         String billingMonth = selected.start().toString().substring(0, 7);
-        String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), YearMonth.from(selected.start())).dataSource();
-        List<AwsBilling> currentRows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId()) : billingSourceResolver.rows(session.accountId(), dataSource, selected.start(), selected.end());
-        String previousSource = billingSourceResolver == null ? dataSource : billingSourceResolver.resolve(session.accountId(), YearMonth.from(selected.start()).minusMonths(1)).dataSource();
-        List<AwsBilling> previousRows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId()) : billingSourceResolver.rows(session.accountId(), previousSource, selected.start().minusMonths(1), selected.start());
+        AwsBillingSourceResolver.ResolvedBilling currentBilling = billingSourceResolver == null ? null
+            : billingSourceResolver.resolve(session.accountId(), selected.start(), selected.end());
+        String dataSource = currentBilling == null ? "CUR_2_0" : currentBilling.dataSource();
+        List<AwsBilling> currentRows = currentBilling == null ? billingRepository.findByAwsAccountId(session.accountId()) : currentBilling.rows();
+        List<AwsBilling> previousRows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId())
+            : billingSourceResolver.resolve(session.accountId(), selected.start().minusMonths(1), selected.start()).rows();
         List<AwsBilling> current = validRows(currentRows, selected);
         List<AwsBilling> previous = validRows(previousRows, new DateRange(selected.start().minusMonths(1), selected.start()));
         String currency = current.stream().map(AwsBilling::getCurrency).filter(this::present).findFirst().orElse("USD");
@@ -94,7 +96,7 @@ public class AwsReportServiceImpl implements AwsReportService {
                     selected.start().toString(), selected.end().minusDays(1).toString(), generatedAt, null, currency,
                     new Summary(null, null, null, null), List.of(), List.of(), List.of(), null, "NOT_AVAILABLE",
                     List.of(), List.of(), new SavingsSummary(null, false),
-                    "No valid CUR billing data was found for the selected billing period.", List.of(), List.of());
+                    "No billing data was found for the selected billing period.", List.of(), List.of());
         }
 
         Map<String, BigDecimal> services = totals(current, AwsBilling::getServiceName);
@@ -151,11 +153,11 @@ public class AwsReportServiceImpl implements AwsReportService {
         }
         String status = partial ? "PARTIAL" : "SUCCESS";
         return new AwsReportResponse(session.accountId(), status, dataSource, billingMonth,
-                selected.start().toString(), selected.end().minusDays(1).toString(), generatedAt, latestUpdated(session.accountId()), currency,
+                selected.start().toString(), selected.end().minusDays(1).toString(), generatedAt, latestUpdated(session.accountId(), selected), currency,
                 new Summary(money(total), previousTotal.signum() == 0 ? null : money(previousTotal), changeAmount, changePercentage),
                 serviceBreakdown, trend, drivers, resources == null ? null : resources.summary(), resourceStatus,
                 insights, recommendations, new SavingsSummary(savings == null || savings.signum() == 0 ? null : money(savings), savings != null && savings.signum() > 0),
-                status.equals("PARTIAL") ? "Some live report sections were unavailable; CUR billing data remains valid." : null,
+                status.equals("PARTIAL") ? "Some live report sections were unavailable; stored billing data remains valid." : null,
                 budgets, alerts);
     }
 
@@ -179,8 +181,10 @@ public class AwsReportServiceImpl implements AwsReportService {
     private boolean present(String value) { return value != null && !value.isBlank(); }
     private String blank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
 
-    private Instant latestUpdated(String accountId) {
-        return billingRepository.findByAwsAccountId(accountId).stream().map(AwsBilling::getUpdatedAt)
+    private Instant latestUpdated(String accountId, DateRange range) {
+        List<AwsBilling> rows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(accountId)
+                : billingSourceResolver.resolve(accountId, range.start(), range.end()).rows();
+        return rows.stream().map(AwsBilling::getUpdatedAt)
                 .filter(value -> value != null).max(Comparator.naturalOrder())
                 .map(value -> value.toInstant(java.time.ZoneOffset.UTC)).orElse(null);
     }

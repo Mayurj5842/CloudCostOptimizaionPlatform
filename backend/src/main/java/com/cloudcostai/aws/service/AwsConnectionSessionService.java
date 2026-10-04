@@ -13,7 +13,7 @@ import java.util.Optional;
 @Service
 public class AwsConnectionSessionService {
 
-    private static final Duration SESSION_TTL = Duration.ofMinutes(30);
+    private static final Duration SESSION_TTL = Duration.ofHours(24);
     private final ConcurrentHashMap<String, ConnectionSession> sessions = new ConcurrentHashMap<>();
 
     public String createSession(String accessKey, String secretKey, String region, AwsIdentity identity) {

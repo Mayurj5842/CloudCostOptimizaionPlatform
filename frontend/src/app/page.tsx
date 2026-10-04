@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import NextLink from "next/link";
 import {
   ArrowRight,
   BarChart3,
@@ -24,8 +24,9 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { useTheme } from "@/providers/theme-provider";
+import { useCloudAccountStore } from "@/store/cloud-account-store";
 
 const features = [
   { icon: BarChart3, title: "Cost analytics", text: "See spend by service, region, and billing period in one focused view." },
@@ -43,6 +44,14 @@ const recommendations = [
   ["EBS / demo-volume", "Unattached storage", "Remove or snapshot after confirming ownership.", "$24.10 est."],
   ["RDS / demo-database", "Oversized database", "Compare utilization and right-size the instance.", "$86.20 est."],
 ];
+
+function Link(props: ComponentProps<typeof NextLink>) {
+  const hasAwsConnection = useCloudAccountStore((state) =>
+    state.connectionStatus === "connected" && Boolean(state.account && state.connectionToken),
+  );
+  const href = props.href === "/dashboard" && !hasAwsConnection ? "/integrations" : props.href;
+  return <NextLink {...props} href={href} />;
+}
 
 function Logo() {
   return <Link href="/" className="flex items-center gap-2.5" aria-label="CloudCostAI home"><span className="flex size-9 items-center justify-center rounded-xl bg-cyan-300 text-slate-950 shadow-[0_0_24px_rgba(103,232,249,0.35)]"><Cloud className="size-5" /></span><span className="text-base font-semibold tracking-tight text-white">CloudCost<span className="text-cyan-300">AI</span></span></Link>;

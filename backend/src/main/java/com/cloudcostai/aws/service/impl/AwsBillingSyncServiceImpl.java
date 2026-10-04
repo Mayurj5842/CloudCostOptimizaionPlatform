@@ -57,12 +57,17 @@ public class AwsBillingSyncServiceImpl implements AwsBillService {
     public AwsBillSummaryResponse syncBilling(String connectionToken) {
         var session = sessionService.getSession(connectionToken);
         if (!syncProperties.isEnabled()) {
-            return createEmptySummary(session.accountId());
+            throw new AwsConnectionException("CUR billing import is disabled. Enable the existing CUR 2.0 S3 sync configuration and retry.");
         }
         try {
             return toResponse(curBillingImportService.importLatest(session.accessKey(), session.secretKey(), session.accountId()));
         } catch (RuntimeException exception) {
             logger.error("CUR billing import failed for account={}: {}", session.accountId(), exception.getMessage());
+            String message = exception.getMessage();
+            if ("AWS_BILLING_S3_BUCKET is not configured.".equals(message)
+                    || "AWS_BILLING_S3_PREFIX is not configured.".equals(message)) {
+                throw new AwsConnectionException(message, exception);
+            }
             throw new AwsConnectionException("CUR 2.0 billing data could not be imported from S3.", exception);
         }
         /*

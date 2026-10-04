@@ -40,7 +40,7 @@ public class AwsReportPdfServiceImpl implements AwsReportPdfService {
     @Override
     public byte[] generate(AwsReportResponse report) {
         if ("NO_DATA".equals(report.status())) {
-            throw new IllegalStateException("No valid CUR billing data was found for the selected billing period.");
+            throw new IllegalStateException("No billing data was found for the selected billing period.");
         }
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 42, 42, 48, 44);

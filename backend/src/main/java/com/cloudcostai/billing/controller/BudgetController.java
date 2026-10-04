@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api")
@@ -32,6 +33,14 @@ public class BudgetController {
         String accountId = accountId(connectionToken);
         return ResponseEntity.ok(new ApiResponse<>(true, "Budgets fetched successfully",
                 budgetService.getBudgetsForAccount(accountId, month)));
+    }
+
+    @GetMapping("/budgets/services")
+    public ResponseEntity<ApiResponse<List<String>>> getServices(
+            @RequestHeader("X-AWS-Connection-Token") String connectionToken,
+            @RequestParam(required = false) String month) {
+        return ResponseEntity.ok(new ApiResponse<>(true, "Budget services fetched successfully",
+                budgetService.getServicesForAccount(accountId(connectionToken), month)));
     }
 
     @GetMapping("/budgets/{id}")
@@ -72,8 +81,13 @@ public class BudgetController {
 
     @GetMapping("/alerts")
     public ResponseEntity<ApiResponse<List<AlertResponse>>> getAlerts(@RequestHeader("X-AWS-Connection-Token") String connectionToken,
-                                                                       @RequestParam(required = false) String month) {
-        return ResponseEntity.ok(new ApiResponse<>(true, "Alerts fetched successfully", budgetService.getAlertsForAccount(accountId(connectionToken), month)));
+                                                                       @RequestParam(required = false) String month,
+                                                                       @RequestParam(required = false) String severity,
+                                                                       @RequestParam(required = false) String type,
+                                                                       @RequestParam(required = false) LocalDate from,
+                                                                       @RequestParam(required = false) LocalDate to) {
+        return ResponseEntity.ok(new ApiResponse<>(true, "Alerts fetched successfully",
+            budgetService.getAlertsForAccount(accountId(connectionToken), month, severity, type, from, to)));
     }
 
     @PatchMapping("/alerts/{id}/read")

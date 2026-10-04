@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshCw, Server } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -15,6 +15,11 @@ const summaryCards = [["Total AWS resources", "all", "totalResources"], ["EC2 in
 export default function ResourcesPage() {
   const { account, connectionToken } = useCloudAccountStore();
   const [selectedType, setSelectedType] = useState("all");
+  const [targetResourceId, setTargetResourceId] = useState<string | null>(null);
+  useEffect(() => {
+    const resourceId = new URLSearchParams(window.location.search).get("resourceId")?.trim();
+    setTargetResourceId(resourceId || null);
+  }, []);
   const resources = useQuery({
     queryKey: ["aws-resources", account?.accountId, connectionToken],
     queryFn: () => fetchAwsResources(connectionToken as string),
@@ -34,7 +39,7 @@ export default function ResourcesPage() {
 
     {resources.isLoading && <LoadingState />}
     {resources.isError && <ErrorState onRetry={() => resources.refetch()} />}
-    {resources.data && <ResourceInventory data={resources.data} selectedType={selectedType} onSelect={setSelectedType} />}
+    {resources.data && <ResourceInventory data={resources.data} selectedType={selectedType} onSelect={setSelectedType} targetResourceId={targetResourceId} />}
   </div>;
 }
 
@@ -50,8 +55,11 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
   return <Card><CardContent className="flex min-h-[220px] flex-col items-center justify-center text-center"><p className="font-medium text-destructive">Unable to fetch AWS resources.</p><p className="mt-2 text-sm text-muted-foreground">Please verify your AWS permissions and connection.</p><Button className="mt-5" onClick={onRetry} variant="outline">Try again</Button></CardContent></Card>;
 }
 
-function ResourceInventory({ data, selectedType, onSelect }: { data: AwsResourceResponse; selectedType: string; onSelect: (type: string) => void }) {
+function ResourceInventory({ data, selectedType, onSelect, targetResourceId }: { data: AwsResourceResponse; selectedType: string; onSelect: (type: string) => void; targetResourceId: string | null }) {
   const [search, setSearch] = useState("");
+  useEffect(() => {
+    if (targetResourceId) setSearch(targetResourceId);
+  }, [targetResourceId]);
   const matches = (values: Array<string | number | null | undefined>) => !search || values.some(value => String(value ?? "").toLowerCase().includes(search.toLowerCase()));
   const ec2 = data.ec2Instances.filter(item => matches([item.instanceId, item.name, item.instanceType, item.state, item.region]));
   const ebs = data.ebsVolumes.filter(item => matches([item.volumeId, item.volumeType, item.state, item.availabilityZone, item.attachedInstanceId]));
@@ -60,8 +68,16 @@ function ResourceInventory({ data, selectedType, onSelect }: { data: AwsResource
   const lambda = data.lambdaFunctions.filter(item => matches([item.functionName, item.runtime, item.state, item.region]));
   const vpcs = data.vpcs.filter(item => matches([item.vpcId, item.name, item.cidrBlock, item.state, item.region]));
   const groups = data.securityGroups.filter(item => matches([item.groupId, item.groupName, item.description, item.vpcId, item.region]));
+  const selectedResource = targetResourceId
+    ? findResourceDetails(data, targetResourceId)
+    : null;
   const show = (type: string) => selectedType === "all" || selectedType === type;
   return <>
+    {targetResourceId && <Card className="border-primary/40"><CardHeader><CardTitle className="text-base">Requested AWS resource</CardTitle></CardHeader><CardContent>
+      {selectedResource
+        ? <><p className="font-medium">{selectedResource.type} · {targetResourceId}</p><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedResource.details.map(([label, value]) => <div key={label}><dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt><dd className="mt-1 break-words text-sm">{value}</dd></div>)}</dl></>
+        : <p className="text-sm text-muted-foreground">Resource details unavailable — AWS resource discovery did not return this stored Resource ID.</p>}
+    </CardContent></Card>}
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{summaryCards.map(([label, type, key]) => <button className="text-left" key={`${label}-${key}`} onClick={() => onSelect(type)} type="button"><Card className={selectedType === type ? "border-primary" : "transition-colors hover:border-primary/60"}><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold">{data.summary[key]}</p></CardContent></Card></button>)}</div>
     <div className="flex flex-col gap-3 sm:flex-row"><input className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" onChange={event => setSearch(event.target.value)} placeholder="Search current resources" value={search} /><select className="h-10 rounded-md border border-input bg-background px-3 text-sm" onChange={event => onSelect(event.target.value)} value={selectedType}><option value="all">All resource types</option><option value="ec2">EC2</option><option value="ebs">EBS</option><option value="s3">S3</option><option value="rds">RDS</option><option value="lambda">Lambda</option><option value="vpc">VPC</option><option value="security-groups">Security groups</option></select></div>
     {selectedType === "all" && <ResourceTable title="Recent resources" columns={["Type", "Resource", "Created/updated", "Status"]} rows={data.recentResources.map(item => [item.resourceType, item.name || item.resourceId, formatDate(item.timestamp), item.status])} />}
@@ -75,6 +91,54 @@ function ResourceInventory({ data, selectedType, onSelect }: { data: AwsResource
       {show("security-groups") && <ResourceTable title="Security groups" columns={["Group ID", "Name", "Description", "VPC ID", "Region", "Inbound", "Outbound"]} rows={groups.map(item => [item.groupId, item.groupName, item.description, item.vpcId, item.region, item.inboundRuleCount, item.outboundRuleCount])} />}
     </div>
   </>;
+}
+
+function findResourceDetails(data: AwsResourceResponse, resourceId: string): { type: string; details: Array<[string, string]> } | null {
+  const present = (value: string | number | boolean | null | undefined) =>
+    value == null || value === "" ? "Not available" : String(value);
+  const ec2 = data.ec2Instances.find(item => item.instanceId === resourceId);
+  if (ec2) return { type: "EC2 instance", details: [
+    ["Resource ID", ec2.instanceId], ["Name", present(ec2.name)], ["Instance type", present(ec2.instanceType)],
+    ["State", present(ec2.state)], ["Region", present(ec2.region)], ["Availability zone", present(ec2.availabilityZone)],
+    ["Private IP", present(ec2.privateIp)], ["Public IP", present(ec2.publicIp)], ["Platform", present(ec2.platform)],
+  ] };
+  const ebs = data.ebsVolumes.find(item => item.volumeId === resourceId);
+  if (ebs) return { type: "EBS volume", details: [
+    ["Resource ID", ebs.volumeId], ["Volume type", present(ebs.volumeType)],
+    ["Size", ebs.size == null ? "Not available" : `${ebs.size} GiB`], ["State", present(ebs.state)],
+    ["Region", present(ebs.region ?? ebs.availabilityZone)], ["Attached instance", present(ebs.attachedInstanceId)],
+    ["Encrypted", present(ebs.encrypted)],
+  ] };
+  const rds = data.rdsDatabases.find(item => item.identifier === resourceId);
+  if (rds) return { type: "RDS database", details: [
+    ["Resource ID", rds.identifier], ["Engine", present(rds.engine)], ["Engine version", present(rds.engineVersion)],
+    ["Instance class", present(rds.instanceClass)], ["Status", present(rds.status)], ["Region", present(rds.region)],
+    ["Allocated storage", rds.allocatedStorage == null ? "Not available" : `${rds.allocatedStorage} GiB`],
+    ["Endpoint", present(rds.endpoint)],
+  ] };
+  const lambda = data.lambdaFunctions.find(item => item.functionArn === resourceId || item.functionName === resourceId);
+  if (lambda) return { type: "Lambda function", details: [
+    ["Resource ID", lambda.functionArn], ["Function name", lambda.functionName], ["Runtime", present(lambda.runtime)],
+    ["State", present(lambda.state)], ["Region", present(lambda.region)], ["Memory", `${lambda.memorySize} MB`],
+    ["Timeout", `${lambda.timeout} seconds`], ["Handler", present(lambda.handler)],
+  ] };
+  const vpc = data.vpcs.find(item => item.vpcId === resourceId);
+  if (vpc) return { type: "VPC", details: [
+    ["Resource ID", vpc.vpcId], ["Name", present(vpc.name)], ["CIDR block", present(vpc.cidrBlock)],
+    ["State", present(vpc.state)], ["Region", present(vpc.region)], ["Default VPC", String(vpc.defaultVpc)],
+  ] };
+  const securityGroup = data.securityGroups.find(item => item.groupId === resourceId);
+  if (securityGroup) return { type: "Security group", details: [
+    ["Resource ID", securityGroup.groupId], ["Name", present(securityGroup.groupName)],
+    ["Description", present(securityGroup.description)], ["VPC", present(securityGroup.vpcId)],
+    ["Region", present(securityGroup.region)], ["Inbound rules", present(securityGroup.inboundRuleCount)],
+    ["Outbound rules", present(securityGroup.outboundRuleCount)],
+  ] };
+  const bucket = data.s3Buckets.find(item => item.bucketName === resourceId);
+  if (bucket) return { type: "S3 bucket", details: [
+    ["Resource ID", bucket.bucketName], ["Region", present(bucket.region)], ["Created", present(bucket.creationDate)],
+  ] };
+  return null;
 }
 
 function ResourceTable({ title, columns, rows }: { title: string; columns: string[]; rows: Array<Array<string | number | null | undefined>> }) {

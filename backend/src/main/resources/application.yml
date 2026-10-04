@@ -18,7 +18,7 @@ spring:
     active: dev
 
 server:
-  port: 8080
+  port: ${PORT:8080}
 
 # Live Cost Explorer API calls may incur AWS charges.
 billing:

@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { AlertTriangle, CheckCircle2, LoaderCircle, Mail, Send } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,27 +17,29 @@ export function EmailNotificationSettings() {
   const userEmail = useAuthStore((state) => state.user?.email);
   const validateSession = useAuthStore((state) => state.validate);
   const account = useCloudAccountStore((state) => state.account);
+  const accountId = account?.accountId ?? "";
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<NotificationPreferences>(() => initialPreferences("", userEmail ?? ""));
+  const [draft, setDraft] = useState<{ accountId: string; source: NotificationPreferences | undefined; value: NotificationPreferences } | null>(null);
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
+  const preferenceQueryKey = ["notification-preferences", token, accountId] as const;
 
   const preferencesQuery = useQuery({
-    queryKey: ["notification-preferences", token, account?.accountId],
-    queryFn: () => fetchNotificationPreferences(token as string, account?.accountId as string),
-    enabled: Boolean(token && account?.accountId),
+    queryKey: preferenceQueryKey,
+    queryFn: () => fetchNotificationPreferences(token as string, accountId),
+    enabled: Boolean(token && accountId),
     retry: false,
   });
-
-  useEffect(() => {
-    if (preferencesQuery.data) setForm(preferencesQuery.data);
-  }, [preferencesQuery.data]);
+  const form = draft?.accountId === accountId && draft.source === preferencesQuery.data
+    ? draft.value
+    : preferencesQuery.data ?? initialPreferences(accountId, userEmail ?? "");
 
   const saveMutation = useMutation({
     mutationFn: () => saveNotificationPreferences(token as string, form),
     onSuccess: (saved) => {
-      setForm(saved);
+      queryClient.setQueryData(preferenceQueryKey, saved);
+      setDraft(null);
       setNotice({ message: "Email notification preferences saved.", error: false });
-      void queryClient.invalidateQueries({ queryKey: ["notification-preferences", token, account?.accountId] });
+      void queryClient.invalidateQueries({ queryKey: preferenceQueryKey });
     },
     onError: (error) => {
       setNotice({ message: getAuthError(error, "Could not save email notification preferences."), error: true });
@@ -53,7 +55,7 @@ export function EmailNotificationSettings() {
   const hasUnsavedChanges = Boolean(preferencesQuery.data && JSON.stringify(form) !== JSON.stringify(preferencesQuery.data));
 
   const update = <K extends keyof NotificationPreferences>(key: K, value: NotificationPreferences[K]) => {
-    setForm((current) => ({ ...current, [key]: value }));
+    setDraft({ accountId, source: preferencesQuery.data, value: { ...form, [key]: value } });
     setNotice(null);
   };
 

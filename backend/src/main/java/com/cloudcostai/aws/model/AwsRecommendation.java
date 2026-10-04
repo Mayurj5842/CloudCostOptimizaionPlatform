@@ -39,7 +39,7 @@ public class AwsRecommendation {
     @Column
     private String region;
 
-    @Column(name = "current_cost", nullable = false)
+    @Column(name = "current_cost")
     private BigDecimal currentCost;
 
     @Column(nullable = false, columnDefinition = "TEXT")

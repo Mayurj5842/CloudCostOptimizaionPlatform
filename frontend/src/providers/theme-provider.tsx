@@ -6,39 +6,45 @@ type Theme = "light" | "dark" | "system";
 type ThemeContextValue = { theme: Theme; resolvedTheme: "light" | "dark"; setTheme: (theme: Theme) => void };
 
 const ThemeContext = React.createContext<ThemeContextValue | null>(null);
+const THEME_CHANGE_EVENT = "cloudcost-theme-change";
 
-function systemTheme(): "light" | "dark" {
-  return typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+function getStoredTheme(): Theme {
+  const stored = window.localStorage.getItem("cloudcost-theme");
+  return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+}
+
+function subscribeToTheme(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  window.addEventListener(THEME_CHANGE_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(THEME_CHANGE_EVENT, onChange);
+  };
+}
+
+function subscribeToSystemTheme(onChange: () => void) {
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function getSystemTheme(): "light" | "dark" {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = React.useState<Theme>("system");
-  const [resolvedTheme, setResolvedTheme] = React.useState<"light" | "dark">("light");
+  const theme = React.useSyncExternalStore<Theme>(subscribeToTheme, getStoredTheme, () => "system");
+  const systemTheme = React.useSyncExternalStore<"light" | "dark">(subscribeToSystemTheme, getSystemTheme, () => "light");
+  const resolvedTheme = theme === "system" ? systemTheme : theme;
 
   React.useEffect(() => {
-    const stored = window.localStorage.getItem("cloudcost-theme");
-    const initial = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-    setThemeState(initial);
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const applyTheme = (selected: Theme) => {
-      const resolved = selected === "system" ? (media.matches ? "dark" : "light") : selected;
-      document.documentElement.classList.toggle("dark", resolved === "dark");
-      document.documentElement.style.colorScheme = resolved;
-      setResolvedTheme(resolved);
-    };
-    const handleSystemChange = () => { if (initial === "system") applyTheme("system"); };
-    applyTheme(initial);
-    media.addEventListener("change", handleSystemChange);
-    return () => media.removeEventListener("change", handleSystemChange);
-  }, []);
+    document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
+    document.documentElement.style.colorScheme = resolvedTheme;
+  }, [resolvedTheme]);
 
   const setTheme = (nextTheme: Theme) => {
     window.localStorage.setItem("cloudcost-theme", nextTheme);
-    setThemeState(nextTheme);
-    const resolved = nextTheme === "system" ? systemTheme() : nextTheme;
-    document.documentElement.classList.toggle("dark", resolved === "dark");
-    document.documentElement.style.colorScheme = resolved;
-    setResolvedTheme(resolved);
+    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
   };
 
   return <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme }}>{children}</ThemeContext.Provider>;

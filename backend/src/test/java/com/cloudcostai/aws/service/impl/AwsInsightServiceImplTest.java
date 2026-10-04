@@ -4,6 +4,7 @@ import com.cloudcostai.aws.config.AwsBillingSyncProperties;
 import com.cloudcostai.aws.dto.response.AwsInsightResponse;
 import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,7 +42,7 @@ class AwsInsightServiceImplTest {
                 billingRow("Amazon RDS", "2026-08-31", "80.00", "august-rds"),
                 billingRow("Amazon S3", "2026-09-01", "1000.00", "september")));
 
-        AwsInsightResponse response = service.getInsights("token");
+        AwsInsightResponse response = service.getInsights("token", "2026-08");
 
         assertThat(response.insights()).isNotEmpty();
     }
@@ -81,6 +82,30 @@ class AwsInsightServiceImplTest {
         assertThat(response.status()).isEqualTo("NO_CUR_DATA");
         assertThat(response.insights()).isEmpty();
     }
+
+        @Test
+        void selectedMonthInsightsUsePersistedCostExplorerRows() {
+        String accountId = "123456789012";
+        LocalDate usageDate = LocalDate.of(2026, 9, 10);
+        AwsBilling liveRow = new AwsBilling(accountId, usageDate, usageDate, "Amazon EC2", "ap-south-1",
+            BigDecimal.ONE, new BigDecimal("12.50"), "USD", false, "Amazon EC2", "Usage", null,
+            "Usage", usageDate, usageDate, "live-row", "COST_EXPLORER");
+        when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+            "access", "secret", "ap-south-1", accountId, Instant.now().plusSeconds(600)));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "CUR_2_0"))
+            .thenReturn(List.of());
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "COST_EXPLORER"))
+            .thenReturn(List.of(liveRow));
+
+        var service = new AwsInsightServiceImpl(sessionService, billingRepository, null, null,
+            new AwsBillingSourceResolver(billingRepository));
+        AwsInsightResponse response = service.getInsights("token", "2026-09");
+
+        assertThat(response.status()).isEqualTo("SUCCESS");
+        assertThat(response.dataSource()).isEqualTo("COST_EXPLORER");
+        assertThat(response.totalSpend()).isEqualByComparingTo("12.50");
+        assertThat(response.insights()).isNotEmpty();
+        }
 
     private AwsInsightServiceImpl service(List<AwsBilling> rows) {
         String accountId = "123456789012";

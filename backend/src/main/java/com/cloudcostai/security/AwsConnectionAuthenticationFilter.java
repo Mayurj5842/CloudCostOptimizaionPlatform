@@ -70,7 +70,11 @@ public class AwsConnectionAuthenticationFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
         } catch (Exception exception) {
             if (isProtectedApi(path)) {
-                writeUnauthorized(response, "AWS connection token is invalid or expired.");
+                String message = exception.getMessage() != null
+                    && exception.getMessage().toLowerCase(java.util.Locale.ROOT).contains("expired")
+                    ? "AWS connection expired. Please reconnect your AWS account."
+                    : "AWS connection token is invalid or expired.";
+                writeUnauthorized(response, message);
                 return;
             }
             filterChain.doFilter(request, response);

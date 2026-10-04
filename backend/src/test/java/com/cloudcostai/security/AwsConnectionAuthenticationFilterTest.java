@@ -25,6 +25,7 @@ class AwsConnectionAuthenticationFilterTest {
     void unrelatedAwsApiStillRequiresAwsToken() {
         assertThat(filter.shouldSkip(request("/api/aws/resources"))).isFalse();
         assertThat(filter.shouldSkip(request("/api/aws/live-cost"))).isFalse();
+        assertThat(filter.shouldSkip(request("/api/aws/optimization/simulator"))).isFalse();
     }
 
     @Test
@@ -75,6 +76,8 @@ class AwsConnectionAuthenticationFilterTest {
         });
 
         assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getContentAsString())
+            .contains("AWS connection expired. Please reconnect your AWS account.");
     }
 
     private MockHttpServletRequest request(String path) {

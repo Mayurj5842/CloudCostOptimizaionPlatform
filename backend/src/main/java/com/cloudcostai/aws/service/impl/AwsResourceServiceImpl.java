@@ -6,9 +6,13 @@ import com.cloudcostai.aws.dto.response.AwsResourceResponse.AwsResourceSummary;
 import com.cloudcostai.aws.exception.AwsConnectionException;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsResourceService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeRegionsRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeSecurityGroupsRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeVolumesRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeVpcsRequest;
@@ -33,9 +37,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Set;
+import java.util.function.Supplier;
 
 @Service
 public class AwsResourceServiceImpl implements AwsResourceService {
+    private static final Logger logger = LoggerFactory.getLogger(AwsResourceServiceImpl.class);
     private final AwsClientFactory clientFactory;
     private final AwsConnectionSessionService sessionService;
 
@@ -47,6 +54,7 @@ public class AwsResourceServiceImpl implements AwsResourceService {
     @Override
     public AwsResourceResponse discoverResources(String connectionToken) {
         AwsConnectionSessionService.ConnectionSession session = sessionService.getSession(connectionToken);
+        logger.info("AWS EC2/EBS discovery started: region={}", session.region());
         try (Ec2Client ec2 = clientFactory.createEc2Client(session.accessKey(), session.secretKey(), session.region());
              S3Client s3 = clientFactory.createS3Client(session.accessKey(), session.secretKey(), session.region());
              RdsClient rds = clientFactory.createRdsClient(session.accessKey(), session.secretKey(), session.region());
@@ -55,17 +63,19 @@ public class AwsResourceServiceImpl implements AwsResourceService {
             List<AwsResourceResponse.Ec2InstanceDto> instances = ec2.describeInstancesPaginator(DescribeInstancesRequest.builder().build())
                     .reservations().stream().flatMap(reservation -> reservation.instances().stream()).map(instance -> toInstance(instance, session.region())).toList();
             List<AwsResourceResponse.EbsVolumeDto> volumes = ec2.describeVolumesPaginator(DescribeVolumesRequest.builder().build())
-                    .volumes().stream().map(this::toVolume).toList();
-            List<AwsResourceResponse.VpcDto> vpcs = ec2.describeVpcsPaginator(DescribeVpcsRequest.builder().build())
-                    .vpcs().stream().map(vpc -> toVpc(vpc, session.region())).toList();
-            List<AwsResourceResponse.SecurityGroupDto> securityGroups = ec2.describeSecurityGroupsPaginator(DescribeSecurityGroupsRequest.builder().build())
-                    .securityGroups().stream().map(group -> toSecurityGroup(group, session.region())).toList();
-            List<AwsResourceResponse.S3BucketDto> buckets = s3.listBuckets(ListBucketsRequest.builder().build()).buckets().stream()
-                    .map(bucket -> toBucket(s3, bucket)).toList();
-            List<AwsResourceResponse.RdsDatabaseDto> databases = rds.describeDBInstancesPaginator(DescribeDbInstancesRequest.builder().build())
-                    .dbInstances().stream().map(database -> toDatabase(database, session.region())).toList();
-            List<AwsResourceResponse.LambdaFunctionDto> functions = lambda.listFunctionsPaginator(ListFunctionsRequest.builder().build())
-                    .functions().stream().map(function -> toFunction(function, session.region())).toList();
+                    .volumes().stream().map(volume -> toVolume(volume, session.region())).toList();
+                logger.info("AWS EC2/EBS discovery completed: region={}, ec2Resources={}, ebsResources={}",
+                    session.region(), instances.size(), volumes.size());
+                List<AwsResourceResponse.VpcDto> vpcs = optionalResources("VPC", () -> ec2.describeVpcsPaginator(DescribeVpcsRequest.builder().build())
+                    .vpcs().stream().map(vpc -> toVpc(vpc, session.region())).toList());
+                List<AwsResourceResponse.SecurityGroupDto> securityGroups = optionalResources("security group", () -> ec2.describeSecurityGroupsPaginator(DescribeSecurityGroupsRequest.builder().build())
+                    .securityGroups().stream().map(group -> toSecurityGroup(group, session.region())).toList());
+                List<AwsResourceResponse.S3BucketDto> buckets = optionalResources("S3 bucket", () -> s3.listBuckets(ListBucketsRequest.builder().build()).buckets().stream()
+                    .map(bucket -> toBucket(s3, bucket)).toList());
+                List<AwsResourceResponse.RdsDatabaseDto> databases = optionalResources("RDS database", () -> rds.describeDBInstancesPaginator(DescribeDbInstancesRequest.builder().build())
+                    .dbInstances().stream().map(database -> toDatabase(database, session.region())).toList());
+                List<AwsResourceResponse.LambdaFunctionDto> functions = optionalResources("Lambda function", () -> lambda.listFunctionsPaginator(ListFunctionsRequest.builder().build())
+                    .functions().stream().map(function -> toFunction(function, session.region())).toList());
 
             int running = (int) instances.stream().filter(instance -> "running".equalsIgnoreCase(instance.state())).count();
             int stopped = (int) instances.stream().filter(instance -> "stopped".equalsIgnoreCase(instance.state())).count();
@@ -83,7 +93,109 @@ public class AwsResourceServiceImpl implements AwsResourceService {
                 return new AwsResourceResponse(session.accountId(), session.region(), summary, instances, volumes, buckets, databases, functions, vpcs, securityGroups,
                     recentResources(instances, volumes, buckets, databases, functions));
         } catch (RuntimeException exception) {
+            logger.warn("AWS EC2/EBS discovery failed: region={}, exceptionType={}",
+                    session.region(), exception.getClass().getSimpleName());
             throw new AwsConnectionException("Unable to fetch AWS resources. Please verify AWS permissions and connection.", exception);
+        }
+    }
+
+    @Override
+    public AwsResourceResponse discoverResourcesForRecommendations(String connectionToken, Set<String> regions) {
+        AwsConnectionSessionService.ConnectionSession session = sessionService.getSession(connectionToken);
+        List<String> targetRegions;
+        try (Ec2Client ec2 = clientFactory.createEc2Client(session.accessKey(), session.secretKey(), session.region())) {
+            targetRegions = ec2.describeRegions(DescribeRegionsRequest.builder().build()).regions().stream()
+                .map(software.amazon.awssdk.services.ec2.model.Region::regionName)
+                .filter(region -> region != null && !region.isBlank())
+                .distinct().sorted().toList();
+        } catch (RuntimeException exception) {
+            logger.warn("AWS enabled-region discovery failed: exceptionType={}", exception.getClass().getSimpleName());
+            if (isAccessDenied(exception)) {
+                throw new AwsConnectionException(
+                    "AWS denied ec2:DescribeRegions. Grant this read permission to discover resources across enabled regions.",
+                    exception);
+            }
+            throw new AwsConnectionException(
+                "Unable to discover enabled AWS regions with ec2:DescribeRegions. Verify the connected AWS credentials and retry.",
+                exception);
+        }
+        if (targetRegions.isEmpty()) {
+            throw new AwsConnectionException(
+                "ec2:DescribeRegions returned no enabled regions for the connected AWS account.");
+        }
+
+        List<AwsResourceResponse.Ec2InstanceDto> instances = new ArrayList<>();
+        List<AwsResourceResponse.EbsVolumeDto> volumes = new ArrayList<>();
+        for (String region : targetRegions) {
+            logger.info("AWS recommendation EC2/EBS discovery started: region={}", region);
+            try (Ec2Client ec2 = clientFactory.createEc2Client(session.accessKey(), session.secretKey(), region)) {
+                try {
+                    instances.addAll(ec2.describeInstancesPaginator(DescribeInstancesRequest.builder().build())
+                        .reservations().stream().flatMap(reservation -> reservation.instances().stream())
+                        .map(instance -> toInstance(instance, region)).toList());
+                } catch (RuntimeException exception) {
+                    throw discoveryFailure("ec2:DescribeInstances", region, exception);
+                }
+                try {
+                    volumes.addAll(ec2.describeVolumesPaginator(DescribeVolumesRequest.builder().build())
+                        .volumes().stream().map(volume -> toVolume(volume, region)).toList());
+                } catch (RuntimeException exception) {
+                    throw discoveryFailure("ec2:DescribeVolumes", region, exception);
+                }
+            } catch (AwsConnectionException exception) {
+                throw exception;
+            } catch (RuntimeException exception) {
+                logger.warn("AWS recommendation EC2/EBS discovery failed: region={}, exceptionType={}",
+                    region, exception.getClass().getSimpleName());
+                throw new AwsConnectionException("Unable to create an EC2 client for resource discovery in "
+                    + region + ". Verify the connected AWS credentials.", exception);
+            }
+        }
+
+        int running = (int) instances.stream().filter(instance -> "running".equalsIgnoreCase(instance.state())).count();
+        int stopped = (int) instances.stream().filter(instance -> "stopped".equalsIgnoreCase(instance.state())).count();
+        int attached = (int) volumes.stream().filter(volume -> volume.attachedInstanceId() != null).count();
+        AwsResourceSummary summary = new AwsResourceSummary(instances.size() + volumes.size(), running + attached,
+            instances.size(), running, stopped, volumes.size(), attached, volumes.size() - attached,
+            0, 0, 0, 0, 0, 0, 0);
+        logger.info("AWS recommendation EC2/EBS discovery completed: regionsScanned={}, regions={}, ec2Resources={}, ebsResources={}, billingRegions={}",
+            targetRegions.size(), targetRegions, instances.size(), volumes.size(), regions);
+        return new AwsResourceResponse(session.accountId(), "MULTI_REGION", summary, instances, volumes,
+            List.of(), List.of(), List.of(), List.of(), List.of());
+    }
+
+    private AwsConnectionException discoveryFailure(String operation, String region, RuntimeException cause) {
+        if (isAccessDenied(cause)) {
+            return new AwsConnectionException("AWS denied " + operation + " in " + region
+                + ". Grant this read permission for the connected account.", cause);
+        }
+        return new AwsConnectionException("Unable to run " + operation + " in " + region
+            + ". Verify the connected AWS credentials and retry.", cause);
+    }
+
+    private boolean isAccessDenied(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof AwsServiceException awsException) {
+                String errorCode = awsException.awsErrorDetails() == null
+                    ? "" : awsException.awsErrorDetails().errorCode();
+                if (awsException.statusCode() == 401 || awsException.statusCode() == 403
+                    || (errorCode != null && (errorCode.toLowerCase().contains("accessdenied")
+                        || errorCode.toLowerCase().contains("unauthorized")
+                        || errorCode.toLowerCase().contains("forbidden")))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private <T> List<T> optionalResources(String resourceType, Supplier<List<T>> discovery) {
+        try {
+            return discovery.get();
+        } catch (RuntimeException exception) {
+            logger.warn("Optional AWS resource discovery failed: resourceType={}, exceptionType={}",
+                    resourceType, exception.getClass().getSimpleName());
+            return List.of();
         }
     }
 
@@ -94,10 +206,11 @@ public class AwsResourceServiceImpl implements AwsResourceService {
             instance.tags().stream().map(tag -> new AwsResourceResponse.TagDto(tag.key(), tag.value())).toList(), instance.platformAsString());
     }
 
-    private AwsResourceResponse.EbsVolumeDto toVolume(Volume volume) {
+    private AwsResourceResponse.EbsVolumeDto toVolume(Volume volume, String region) {
         String attachedInstance = volume.attachments().stream().map(attachment -> attachment.instanceId()).filter(Objects::nonNull).findFirst().orElse(null);
         return new AwsResourceResponse.EbsVolumeDto(volume.volumeId(), volume.volumeTypeAsString(), volume.size(), volume.stateAsString(), volume.availabilityZone(), attachedInstance,
-            instant(volume.createTime()), volume.encrypted());
+            instant(volume.createTime()), volume.encrypted(), region,
+            volume.tags().stream().map(tag -> new AwsResourceResponse.TagDto(tag.key(), tag.value())).toList());
     }
 
     private AwsResourceResponse.S3BucketDto toBucket(S3Client s3, Bucket bucket) {

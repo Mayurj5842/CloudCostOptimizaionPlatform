@@ -60,7 +60,7 @@ export type AwsResourceResponse = {
     unusedVolumes: number;
   };
   ec2Instances: Array<{ instanceId: string; name: string | null; instanceType: string | null; state: string | null; availabilityZone: string | null; region: string; privateIp: string | null; publicIp: string | null; launchTime: string | null; tags: Array<{ key: string; value: string }>; platform: string | null }>;
-  ebsVolumes: Array<{ volumeId: string; volumeType: string | null; size: number; state: string | null; availabilityZone: string | null; attachedInstanceId: string | null; creationTime: string | null; encrypted: boolean | null }>;
+  ebsVolumes: Array<{ volumeId: string; volumeType: string | null; size: number | null; state: string | null; availabilityZone: string | null; attachedInstanceId: string | null; creationTime: string | null; encrypted: boolean | null; region?: string | null; tags: Array<{ key: string; value: string }> }>;
   s3Buckets: Array<{ bucketName: string; creationDate: string | null; region: string | null }>;
   rdsDatabases: Array<{ identifier: string; engine: string | null; engineVersion: string | null; instanceClass: string | null; status: string | null; availabilityZone: string | null; endpoint: string | null; region: string; allocatedStorage: number | null; creationTime: string | null; multiAz: boolean | null }>;
   lambdaFunctions: Array<{ functionName: string; runtime: string | null; memorySize: number | null; timeout: number | null; lastModified: string | null; functionArn: string; region: string; handler: string | null; state: string | null; runtimeStatus: string | null }>;
@@ -166,19 +166,33 @@ export type Budget = {
   thresholds: number[];
   createdAt: string;
   updatedAt: string;
+  serviceName: string | null;
+  enabled: boolean;
+  forecastSpend: number | null;
+  projectedVariance: number | null;
+  forecastAvailable: boolean;
+  forecastMessage: string;
+  spikeThresholdPercent: number;
 };
 
 export type BudgetAlert = {
   id: string;
   budgetId: string;
   type: string;
-  threshold: number;
+  threshold: number | null;
   message: string;
-  actualSpend: number;
-  budgetAmount: number;
-  currency: string;
+  actualSpend: number | null;
+  budgetAmount: number | null;
+  currency: string | null;
   read: boolean;
   createdAt: string;
+  severity: "INFO" | "WARNING" | "CRITICAL";
+  title: string;
+  budgetName: string | null;
+  serviceName: string | null;
+  alertPeriod: string;
+  comparisonPeriod: string | null;
+  percentageChange: number | null;
 };
 
 type BudgetRequest = {
@@ -189,6 +203,17 @@ type BudgetRequest = {
   period: string;
   thresholds: number[];
   month?: string;
+  serviceName?: string | null;
+  enabled?: boolean;
+  spikeThresholdPercent?: number;
+};
+
+export type BudgetAlertFilters = {
+  month?: string;
+  severity?: string;
+  type?: string;
+  from?: string;
+  to?: string;
 };
 
 export async function fetchBudgets(connectionToken: string, month?: string): Promise<Budget[]> {
@@ -200,7 +225,19 @@ export async function fetchBudgets(connectionToken: string, month?: string): Pro
 }
 
 export async function fetchBudgetAlerts(connectionToken: string, month?: string): Promise<BudgetAlert[]> {
+  return fetchBudgetAlertsFiltered(connectionToken, { month });
+}
+
+export async function fetchBudgetAlertsFiltered(connectionToken: string, filters: BudgetAlertFilters): Promise<BudgetAlert[]> {
   const response = await axios.get<ApiResponse<BudgetAlert[]>>(`${apiUrl}/api/alerts`, {
+    params: Object.values(filters).some(Boolean) ? filters : undefined,
+    headers: getAwsHeaders(connectionToken),
+  });
+  return response.data.data;
+}
+
+export async function fetchBudgetServices(connectionToken: string, month?: string): Promise<string[]> {
+  const response = await axios.get<ApiResponse<string[]>>(`${apiUrl}/api/budgets/services`, {
     params: month ? { month } : undefined,
     headers: getAwsHeaders(connectionToken),
   });
@@ -274,7 +311,7 @@ export type AwsCostAnalyticsResponse = {
   potentialSavings: { available: boolean; monthlySavings: number | null };
   dataStatus: "AVAILABLE" | "NO_CUR_DATA" | "UNAVAILABLE";
   billingPeriod: string;
-  dataSource: "AWS_CUR_2_0" | "CUR_POSTGRESQL" | "DATABASE_CACHE";
+  dataSource: "CUR_2_0" | "COST_EXPLORER" | "MIXED" | "AWS_CUR_2_0" | "CUR_POSTGRESQL" | "DATABASE_CACHE";
   totalCost: number | null;
   lastUpdated: string | null;
   status: string;
@@ -376,6 +413,7 @@ export type AwsRecommendation = {
   resourceId: string | null;
   evidence: string | null;
   billingMonth: string;
+  dataSource: string;
 };
 
 export type AwsRecommendationResponse = {
@@ -383,33 +421,92 @@ export type AwsRecommendationResponse = {
   currency: string;
   recommendations: AwsRecommendation[];
   billingMonth: string;
-  status: "SUCCESS" | "NO_DATA" | "NO_RECOMMENDATIONS";
+  status: "SUCCESS" | "NO_DATA" | "NO_RESOURCES" | "NO_RECOMMENDATIONS" | "NO_RESOURCE_BILLING_MATCH" | "INSUFFICIENT_BILLING_EVIDENCE" | "PERMISSION_DENIED" | "RESOURCE_UNAVAILABLE";
   message: string | null;
   totalSpend: number | null;
+  analysisComplete: boolean;
+  resourceDataStatus: "AVAILABLE" | "UNAVAILABLE" | "NO_RESOURCES" | "PERMISSION_DENIED" | "NOT_CHECKED";
+  evaluationReasons: string[];
 };
 
 export async function fetchAwsRecommendations(connectionToken: string, month?: string): Promise<AwsRecommendationResponse> {
-  const response = await axios.get<ApiResponse<AwsRecommendationResponse>>(`${apiUrl}/api/aws/recommendations`, {
-    params: month ? { month } : undefined,
-    headers: { "X-AWS-Connection-Token": connectionToken },
+  try {
+    const response = await axios.get<ApiResponse<AwsRecommendationResponse>>(`${apiUrl}/api/aws/recommendations`, {
+      params: month ? { month } : undefined,
+      headers: getAwsHeaders(connectionToken),
+    });
+    return response.data.data;
+  } catch (error) {
+    throw recommendationApiError(error);
+  }
+}
+
+export type AwsCostSimulationResponse = {
+  accountId: string;
+  billingMonth: string;
+  currency: string | null;
+  dataSource: string;
+  status: "SUCCESS" | "NO_BILLING_DATA" | "INSUFFICIENT_PRICING_DATA" | string;
+  message: string | null;
+  currentMonthlyCost: number | null;
+  estimatedMonthlyCost: number | null;
+  estimatedMonthlySaving: number | null;
+  estimatedAnnualSaving: number | null;
+  scenarios: Array<{
+    recommendationId: string;
+    title: string;
+    service: string;
+    resourceId: string | null;
+    region: string | null;
+    status: "AVAILABLE" | "INSUFFICIENT_PRICING_DATA" | "ALREADY_APPLIED" | string;
+    estimatedMonthlySaving: number | null;
+    message: string | null;
+  }>;
+};
+
+export async function simulateAwsCost(connectionToken: string, month: string, recommendationIds: string[]): Promise<AwsCostSimulationResponse> {
+  const response = await axios.post<ApiResponse<AwsCostSimulationResponse>>(`${apiUrl}/api/aws/optimization/simulator`, {
+    month,
+    recommendationIds,
+  }, {
+    headers: getAwsHeaders(connectionToken),
   });
   return response.data.data;
 }
 
 export async function generateAwsRecommendations(connectionToken: string, month?: string): Promise<AwsRecommendationResponse> {
-  const response = await axios.post<ApiResponse<AwsRecommendationResponse>>(`${apiUrl}/api/aws/recommendations/generate`, null, {
-    params: month ? { month } : undefined,
-    headers: { "X-AWS-Connection-Token": connectionToken },
-  });
-  return response.data.data;
+  try {
+    const response = await axios.post<ApiResponse<AwsRecommendationResponse>>(`${apiUrl}/api/aws/recommendations/generate`, null, {
+      params: month ? { month } : undefined,
+      headers: getAwsHeaders(connectionToken),
+    });
+    return response.data.data;
+  } catch (error) {
+    throw recommendationApiError(error);
+  }
 }
 
 export async function updateAwsRecommendationStatus(connectionToken: string, id: string, status: AwsRecommendation["status"], month?: string): Promise<AwsRecommendationResponse> {
-  const response = await axios.put<ApiResponse<AwsRecommendationResponse>>(`${apiUrl}/api/aws/recommendations/${encodeURIComponent(id)}/status`, null, {
-    params: { value: status, ...(month ? { month } : {}) },
-    headers: { "X-AWS-Connection-Token": connectionToken },
-  });
-  return response.data.data;
+  try {
+    const response = await axios.put<ApiResponse<AwsRecommendationResponse>>(`${apiUrl}/api/aws/recommendations/${encodeURIComponent(id)}/status`, null, {
+      params: { value: status, ...(month ? { month } : {}) },
+      headers: getAwsHeaders(connectionToken),
+    });
+    return response.data.data;
+  } catch (error) {
+    throw recommendationApiError(error);
+  }
+}
+
+function recommendationApiError(error: unknown): Error {
+  if (!axios.isAxiosError<ApiResponse<unknown>>(error)) {
+    return error instanceof Error ? error : new Error("Recommendation request failed.");
+  }
+  if (error.response?.status === 401) {
+    return new Error("AWS connection expired. Please reconnect your AWS account.");
+  }
+  const message = error.response?.data?.message;
+  return new Error(typeof message === "string" && message.trim() ? message : error.message);
 }
 
 export type AwsDashboardChartResponse = {

@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useTheme } from "@/providers/theme-provider";
 import { ShieldCheck, Loader2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -11,7 +10,6 @@ import { fetchAwsBillSummary } from "@/services/aws-bill";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
 
 export default function BillsPage() {
-  const { resolvedTheme } = useTheme();
   const { account, connectionToken } = useCloudAccountStore();
   const billQuery = useQuery({
     queryKey: ["aws-bill-summary", account?.accountId, connectionToken],

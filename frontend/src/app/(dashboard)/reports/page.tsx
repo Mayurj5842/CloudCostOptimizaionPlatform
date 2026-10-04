@@ -23,11 +23,11 @@ export default function ReportsPage() {
     retry: false,
   });
 
-  if (!account || !connectionToken) return <EmptyState title="Connect an AWS account first" message="Reports use persisted CUR billing and AWS resource data." />;
+  if (!account || !connectionToken) return <EmptyState title="Connect an AWS account first" message="Reports use persisted billing and AWS resource data." />;
   if (report.isLoading) return <Card><CardContent className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground"><LoaderCircle className="mr-2 size-4 animate-spin" />Generating report...</CardContent></Card>;
   if (report.isError) return <EmptyState title="Unable to generate report" message={report.error instanceof Error ? report.error.message : "The report could not be generated."} error />;
   const data = report.data;
-  if (!data || data.status === "NO_DATA") return <EmptyState title="No report data available" message={data?.message ?? "No valid CUR billing data was found for this billing period."} />;
+  if (!data || data.status === "NO_DATA") return <EmptyState title="No report data available" message={data?.message ?? "No billing data was found for this billing period."} />;
   const money = (value: number | null) => value == null ? "Unavailable" : new Intl.NumberFormat("en-US", { style: "currency", currency: data.currency }).format(value);
 
   const generatePdf = async () => {

@@ -56,6 +56,30 @@ class AwsCostAnalyticsServiceImplTest {
     }
 
     @Test
+    void anomalyEntriesUseEachFlaggedDayAndItsOwnCost() {
+        String account = "123456789012";
+        when(sessionService.getSession("token")).thenReturn(session(account));
+        when(billingRepository.findByAwsAccountId(account)).thenReturn(List.of(
+            row(account, LocalDate.of(2026, 8, 1), "1000.00", "EC2"),
+            row(account, LocalDate.of(2026, 8, 2), "900.00", "RDS"),
+            row(account, LocalDate.of(2026, 8, 3), "1.00", "S3"),
+            row(account, LocalDate.of(2026, 8, 4), "1.00", "S3"),
+            row(account, LocalDate.of(2026, 8, 5), "1.00", "S3"),
+            row(account, LocalDate.of(2026, 8, 6), "1.00", "S3"),
+            row(account, LocalDate.of(2026, 8, 7), "1.00", "S3"),
+            row(account, LocalDate.of(2026, 8, 8), "0.00", "S3")));
+        when(recommendationRepository.findByAwsAccountIdOrderByCreatedAtDesc(account)).thenReturn(List.of());
+        when(budgetRepository.findFirstByAwsAccountIdAndStatusOrderByCreatedAtDesc(account, "ACTIVE")).thenReturn(Optional.empty());
+
+        var response = service().getAnalytics("token", "CURRENT_MONTH", "2026-08");
+
+        assertThat(response.anomalies()).extracting("date", "cost")
+            .containsExactlyInAnyOrder(
+                tuple("2026-08-01", new BigDecimal("1000.00")),
+                tuple("2026-08-02", new BigDecimal("900.00")));
+    }
+
+    @Test
     void nullUsageDateFallsBackToBillingPeriodStart() {
         String account = "123456789012";
         when(sessionService.getSession("token")).thenReturn(session(account));
@@ -81,7 +105,7 @@ class AwsCostAnalyticsServiceImplTest {
 
         assertThat(response.dataStatus()).isEqualTo("NO_CUR_DATA");
         assertThat(response.summary().totalCost()).isNull();
-        assertThat(response.message()).contains("No CUR data");
+        assertThat(response.message()).contains("No billing data");
     }
 
         @Test

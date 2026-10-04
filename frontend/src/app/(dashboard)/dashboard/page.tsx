@@ -6,14 +6,16 @@ import CostTrendChart from "@/features/dashboard/charts/cost-trend-chart";
 import ServiceDistributionChart from "@/features/dashboard/charts/service-distribution-chart";
 import RecommendationPanel from "@/features/dashboard/recommendation-panel";
 import ActivityFeed from "@/features/dashboard/activity-feed";
+import { useMonthSelectionStore } from "@/store/month-selection-store";
 
 export default function DashboardPage() {
   const [range, setRange] = useState("30D");
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const month = useMonthSelectionStore((state) => state.selectedMonth);
+  const setMonth = useMonthSelectionStore((state) => state.setSelectedMonth);
   return (
     <div className="space-y-6 lg:space-y-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div><h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1><p className="text-sm text-muted-foreground">CUR billing and live AWS resource overview</p></div>
+        <div><h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1><p className="text-sm text-muted-foreground">Persisted AWS billing and live resource overview</p></div>
         <label className="flex items-center gap-2 text-sm font-medium"><span className="text-muted-foreground">Billing month</span><input className="h-9 rounded-lg border border-input bg-background px-3" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
       </div>
       <StatsGrid month={month} />

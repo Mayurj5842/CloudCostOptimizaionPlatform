@@ -12,10 +12,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getChartTheme } from "@/lib/chart-theme";
 import { fetchAwsCostAnalytics, type AwsCostAnalyticsResponse } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
+import { useMonthSelectionStore } from "@/store/month-selection-store";
+
+type BreakdownView = "Service" | "Region" | "Account";
+type TooltipEntry = { axisValue?: string | number; data?: unknown; seriesName?: string };
 
 export default function BillingPage() {
   const { resolvedTheme } = useTheme();
-  const [month, setMonth] = React.useState(() => new Date().toISOString().slice(0, 7));
+  const month = useMonthSelectionStore((state) => state.selectedMonth);
+  const setMonth = useMonthSelectionStore((state) => state.setSelectedMonth);
   const { account, connectionToken } = useCloudAccountStore();
   const analytics = useQuery({
     queryKey: ["aws-cost-analytics", account?.accountId, connectionToken, month],
@@ -57,11 +62,11 @@ function AnalyticsReport({ data, resolvedTheme }: { data: AwsCostAnalyticsRespon
   const isUnavailable = data.dataStatus === "UNAVAILABLE" || data.dataStatus === "NO_CUR_DATA";
   
   if (isUnavailable) {
-    return <Card><CardContent className="flex min-h-[280px] flex-col items-center justify-center text-center"><BarChart3 className="size-10 text-muted-foreground" /><p className="mt-4 font-medium">Billing data is not available yet.</p><p className="mt-2 text-sm text-muted-foreground">Please run billing synchronization after CUR 2.0 data is delivered to S3.</p></CardContent></Card>;
+    return <Card><CardContent className="flex min-h-[280px] flex-col items-center justify-center text-center"><BarChart3 className="size-10 text-muted-foreground" /><p className="mt-4 font-medium">Billing data is not available yet.</p><p className="mt-2 text-sm text-muted-foreground">Import CUR data or fetch live AWS cost for the selected period.</p></CardContent></Card>;
   }
   
   return <>
-    <p className="text-xs text-muted-foreground">Latest AWS billing data from {data.dataSource ?? "AWS CUR 2.0 / PostgreSQL"} for {data.period.start} through {data.period.end}. {data.lastUpdated ? `Last updated: ${new Date(data.lastUpdated).toLocaleString()}.` : "Last updated: Unavailable."} Status: {data.dataStatus}.</p>
+    <p className="text-xs text-muted-foreground">Latest AWS billing data from {data.dataSource ?? "PostgreSQL"} for {data.period.start} through {data.period.end}. {data.lastUpdated ? `Last updated: ${new Date(data.lastUpdated).toLocaleString()}.` : "Last updated: Unavailable."} Status: {data.dataStatus}.</p>
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{[
       ["Total", format(data.summary.totalCost)], ["Previous period", format(data.summary.previousPeriodCost)], ["Difference", format(data.summary.difference)], ["Change", data.summary.percentageChange == null ? "Unavailable" : `${data.summary.percentageChange}%`], ["Daily average", format(data.summary.dailyAverage)],
     ].map(([label, value]) => <Card key={label}><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></CardContent></Card>)}</section>
@@ -74,7 +79,7 @@ function AnalyticsReport({ data, resolvedTheme }: { data: AwsCostAnalyticsRespon
 function TrendChart({ data, resolvedTheme }: { data: AwsCostAnalyticsResponse; resolvedTheme?: string }) {
   const colors = typeof document === "undefined" ? null : getChartTheme();
 
-  const [view, setView] = React.useState<"Service"|"Region"|"Account">("Service");
+  const [view, setView] = React.useState<BreakdownView>("Service");
 
   // aggregate daily data into month buckets (YYYY-MM)
   const monthMap = new Map<string, Map<string, number>>(); // month -> (service -> cost)
@@ -131,15 +136,16 @@ function TrendChart({ data, resolvedTheme }: { data: AwsCostAnalyticsResponse; r
 
   const series = view === 'Service' ? serviceSeries : view === 'Region' ? regionSeries : accountSeries;
 
-  const tooltipFormatter = (params: any) => {
-    const axisValue = params?.[0]?.axisValue ?? '';
-    const items = Array.isArray(params) ? [...params] : [params];
-    items.sort((a: any, b: any) => (Number(b.data) || 0) - (Number(a.data) || 0));
+  const tooltipFormatter = (params: unknown) => {
+    const items: TooltipEntry[] = (Array.isArray(params) ? params : [params])
+      .filter((item): item is TooltipEntry => typeof item === "object" && item !== null);
+    const axisValue = items[0]?.axisValue ?? '';
+    items.sort((a, b) => (Number(b.data) || 0) - (Number(a.data) || 0));
     let total = 0;
-    const rows = items.map((p: any) => {
+    const rows = items.map((p) => {
       const val = Number(p.data) || 0;
       total += val;
-      return `<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="margin-right:8px">${p.seriesName}</span><span>${formatCurrency(val, data.currency)}</span></div>`;
+      return `<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="margin-right:8px">${p.seriesName ?? ""}</span><span>${formatCurrency(val, data.currency)}</span></div>`;
     }).join('');
     return `<div style="max-height:320px;overflow:auto;padding:6px"><div style="font-weight:600;margin-bottom:6px">${axisValue}</div>${rows}<hr style="border:none;border-top:1px solid ${colors?.grid};margin:6px 0"/><div style="display:flex;justify-content:space-between;font-weight:600"><span>Total</span><span>${formatCurrency(total, data.currency)}</span></div></div>`;
   };
@@ -167,7 +173,7 @@ function TrendChart({ data, resolvedTheme }: { data: AwsCostAnalyticsResponse; r
       <CardTitle>Cost Breakdown <span className="ml-2 text-sm text-muted-foreground">Info</span></CardTitle>
       <div className="flex items-center gap-3">
         <div className="text-sm text-muted-foreground">Group costs by</div>
-        <select className="h-9 rounded border border-input bg-background px-2 text-sm" value={view} onChange={(e) => setView(e.target.value as any)}>
+        <select className="h-9 rounded border border-input bg-background px-2 text-sm" value={view} onChange={(e) => setView(e.target.value as BreakdownView)}>
           <option value="Service">Service</option>
           <option value="Region">Region</option>
           <option value="Account">Account</option>

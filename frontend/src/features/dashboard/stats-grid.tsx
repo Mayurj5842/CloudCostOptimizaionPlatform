@@ -4,7 +4,7 @@ import { useState } from "react";
 import StatCard from "./stat-card";
 import { AlertTriangle, DollarSign, LoaderCircle, PiggyBank, Server, Wallet, X } from "lucide-react";
 import { useAwsDashboard } from "./use-aws-dashboard";
-import { fetchAwsResources, fetchLiveAwsCost, type AwsResourceResponse } from "@/services/aws-connection";
+import { fetchAwsResources, fetchLiveAwsCost, generateAwsRecommendations, type AwsResourceResponse } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -15,9 +15,16 @@ export default function StatsGrid({ month }: { month: string }) {
   const accountId = useCloudAccountStore((state) => state.account?.accountId);
   const connectionToken = useCloudAccountStore((state) => state.connectionToken);
   const queryClient = useQueryClient();
+  const [recommendationSyncError, setRecommendationSyncError] = useState<string | null>(null);
   const liveCost = useMutation({
     mutationFn: () => fetchLiveAwsCost(connectionToken as string, month),
     onSuccess: async () => {
+      setRecommendationSyncError(null);
+      try {
+        await generateAwsRecommendations(connectionToken as string, month);
+      } catch (error) {
+        setRecommendationSyncError(error instanceof Error ? error.message : "Recommendations could not be refreshed from the saved billing data.");
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["aws-dashboard", connectionToken, month] }),
         queryClient.invalidateQueries({ queryKey: ["aws-cost-trend", connectionToken] }),
@@ -26,6 +33,9 @@ export default function StatsGrid({ month }: { month: string }) {
         queryClient.invalidateQueries({ queryKey: ["aws-report"], exact: false }),
         queryClient.invalidateQueries({ queryKey: ["aws-bill-summary"], exact: false }),
         queryClient.invalidateQueries({ queryKey: ["aws-insights"], exact: false }),
+        queryClient.invalidateQueries({ queryKey: ["aws-recommendations"], exact: false }),
+        queryClient.invalidateQueries({ queryKey: ["budgets"], exact: false }),
+        queryClient.invalidateQueries({ queryKey: ["budget-alerts"], exact: false }),
       ]);
     },
     retry: false,
@@ -69,10 +79,11 @@ export default function StatsGrid({ month }: { month: string }) {
     <>
       <section className="mb-4 rounded-lg border border-border bg-card p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div><p className="text-sm font-medium">Billing Source</p><p className="text-xs text-muted-foreground">CUR 2.0 is the default. Live AWS Cost is fetched only when requested.</p></div>
+          <div><p className="text-sm font-medium">Billing Source</p><p className="text-xs text-muted-foreground">Persisted billing is displayed; fetched Cost Explorer data takes precedence for its month.</p></div>
           <button className="rounded-md border border-border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60" disabled={liveCost.isPending || !connectionToken} onClick={() => liveCost.mutate()} type="button">{liveCost.isPending ? "Fetching live cost..." : "Fetch Live AWS Cost"}</button>
         </div>
         {liveCost.isError && <p className="mt-3 flex items-center gap-2 text-sm text-destructive"><AlertTriangle className="size-4" />{liveCost.error instanceof Error ? liveCost.error.message : "AWS Cost Explorer could not fetch live cost data."}</p>}
+        {recommendationSyncError && <p className="mt-3 text-sm text-destructive">{recommendationSyncError}</p>}
         {liveCost.data?.status === "NO_DATA" && <p className="mt-3 text-sm text-muted-foreground">No live AWS cost data is available for {month}.</p>}
         {liveCost.data?.status === "SUCCESS" && <div className="mt-3 text-sm"><p><strong>Live AWS cost:</strong> {formatCurrency(liveCost.data.cost ?? 0, liveCost.data.currency)}</p><p className="text-xs text-muted-foreground">{liveCost.data.billingPeriodStart} to {liveCost.data.billingPeriodEnd} · Fetched {new Date(liveCost.data.fetchedAt).toLocaleString()} · Data Source: AWS Cost Explorer</p><div className="mt-3 grid gap-4 border-t border-border pt-2 sm:grid-cols-2"><div className="space-y-1"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Service</p>{liveCost.data.services.map((item) => <div className="flex justify-between gap-3 text-xs" key={item.service}><span>{item.service}</span><span>{formatCurrency(item.cost, item.currency)}</span></div>)}</div><div className="space-y-1"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Region</p>{liveCost.data.regions.map((item) => <div className="flex justify-between gap-3 text-xs" key={item.region}><span>{item.region}</span><span>{formatCurrency(item.cost, item.currency)}</span></div>)}</div></div></div>}
         <p className="mt-2 text-xs text-warning">AWS Cost Explorer API usage may incur AWS charges.</p>

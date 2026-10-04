@@ -148,13 +148,13 @@
 }
 
 [data-landing-theme="light"] {
-  background: #f4f8fb !important;
+  background: #eef3f6 !important;
   color: #172033 !important;
 }
 
 [data-landing-theme="light"] nav {
-  background: rgb(244 248 251 / 88%) !important;
-  border-color: #dce3ec !important;
+  background: rgb(238 243 246 / 96%) !important;
+  border-color: #cbd5df !important;
 }
 
 [data-landing-theme="light"] [class*="bg-[#0a1322]"] ,
@@ -174,16 +174,38 @@
 }
 
 [data-landing-theme="light"] [class*="border-white"] {
-  border-color: #dce3ec !important;
+  border-color: #cbd5df !important;
 }
 
 [data-landing-theme="light"] .text-white { color: #172033 !important; }
 [data-landing-theme="light"] [class*="text-slate-200"],
-[data-landing-theme="light"] [class*="text-slate-300"] { color: #344156 !important; }
-[data-landing-theme="light"] [class*="text-slate-400"] { color: #64748b !important; }
+[data-landing-theme="light"] [class*="text-slate-300"] { color: #334155 !important; }
+[data-landing-theme="light"] [class*="text-slate-400"],
 [data-landing-theme="light"] [class*="text-slate-500"],
 [data-landing-theme="light"] [class*="text-slate-600"],
-[data-landing-theme="light"] [class*="text-slate-700"] { color: #718096 !important; }
+[data-landing-theme="light"] [class*="text-slate-700"] { color: #475569 !important; }
+[data-landing-theme="light"] [class*="text-cyan-"] { color: #075f7b !important; }
+[data-landing-theme="light"] [class*="text-emerald-"] { color: #166534 !important; }
+[data-landing-theme="light"] [class*="text-violet-"] { color: #5b21b6 !important; }
+[data-landing-theme="light"] [class*="text-amber-"] { color: #854d0e !important; }
+[data-landing-theme="light"] [class*="text-transparent"] {
+  background-image: none !important;
+  color: #075f7b !important;
+  -webkit-text-fill-color: #075f7b !important;
+}
+
+[data-login-page] {
+  background: #eef3f6 !important;
+}
+
+[data-login-page] [class*="text-slate-400"] {
+  color: #475569 !important;
+}
+
+[data-login-page] input::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
 
 [data-landing-theme="light"] [class*="shadow-cyan-950"] {
   --tw-shadow-color: rgb(8 126 164 / 12%) !important;

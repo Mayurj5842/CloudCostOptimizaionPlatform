@@ -22,5 +22,13 @@ public record BudgetRequest(
         @NotBlank(message = "Budget period is required")
         String period,
         List<Integer> thresholds,
-        String month
-) {}
+        String month,
+        String serviceName,
+        Boolean enabled,
+        Integer spikeThresholdPercent
+) {
+    public BudgetRequest(String name, String awsAccountId, BigDecimal amount, String currency, String period,
+                         List<Integer> thresholds, String month) {
+        this(name, awsAccountId, amount, currency, period, thresholds, month, null, null, null);
+    }
+}

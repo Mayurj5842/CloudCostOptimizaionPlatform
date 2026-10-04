@@ -33,6 +33,29 @@ public interface AwsBillingRepository extends JpaRepository<AwsBilling, UUID> {
 
         Optional<AwsBilling> findByRecordKey(String recordKey);
 
+        @Query(value = """
+            select * from aws_billing
+            where aws_account_id = :accountId
+              and data_source = 'CUR_2_0'
+              and usage_start_date = :usageStartDate
+              and coalesce(usage_end_date, billing_period_end) = :usageEndDate
+              and service_name = :serviceName
+              and coalesce(usage_type, '') = coalesce(:usageType, '')
+              and coalesce(line_item_type, '') = coalesce(:lineItemType, '')
+              and usage_amount = :usageAmount
+              and cost_amount = :costAmount
+              and currency = :currency
+            """, nativeQuery = true)
+        List<AwsBilling> findPotentialCurRevision(@Param("accountId") String accountId,
+                                                   @Param("usageStartDate") LocalDate usageStartDate,
+                                                   @Param("usageEndDate") LocalDate usageEndDate,
+                                                   @Param("serviceName") String serviceName,
+                                                   @Param("usageType") String usageType,
+                                                   @Param("lineItemType") String lineItemType,
+                                                   @Param("usageAmount") BigDecimal usageAmount,
+                                                   @Param("costAmount") BigDecimal costAmount,
+                                                   @Param("currency") String currency);
+
         List<AwsBilling> findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(String awsAccountId, String dataSource);
 
         @Query("select coalesce(sum(b.costAmount), 0) from AwsBilling b where b.awsAccountId = :accountId and b.dataSource = 'CUR_2_0' and b.usageStartDate >= :start and b.usageStartDate < :end")

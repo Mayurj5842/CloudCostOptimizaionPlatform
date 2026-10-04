@@ -3,6 +3,7 @@ package com.cloudcostai.aws.service.impl;
 import com.cloudcostai.aws.config.AwsClientFactory;
 import com.cloudcostai.aws.dto.response.AwsLiveCostResponse;
 import com.cloudcostai.aws.exception.AwsConnectionException;
+import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsLiveCostService;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
@@ -15,10 +16,15 @@ import software.amazon.awssdk.services.costexplorer.model.GetCostAndUsageRequest
 import software.amazon.awssdk.services.costexplorer.model.GroupDefinition;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.HexFormat;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -47,23 +53,35 @@ public class AwsLiveCostServiceImpl implements AwsLiveCostService {
                             .groupBy(GroupDefinition.builder().type("DIMENSION").key("REGION").build(),
                                 GroupDefinition.builder().type("DIMENSION").key("SERVICE").build())
                     .build());
-            if (response.resultsByTime() == null || response.resultsByTime().isEmpty()
-                    || response.resultsByTime().get(0).total() == null
-                    || response.resultsByTime().get(0).total().get("UnblendedCost") == null) {
-                return new AwsLiveCostResponse(session.accountId(), range.start().toString(), range.end().minusDays(1).toString(), "USD", null, List.of(), List.of(),
-                        "COST_EXPLORER", LocalDateTime.now().toString(), "NO_DATA", "AWS Cost Explorer returned no cost data for this period.");
-            }
                 String currency = "USD";
                 String fetchedAt = LocalDateTime.now().toString();
                 java.util.List<StoredCost> storedCosts = new java.util.ArrayList<>();
-                response.resultsByTime().forEach(result -> result.groups().forEach(group -> {
-                    String region = group.keys().isEmpty() ? "NoRegion" : group.keys().get(0);
-                    String service = group.keys().size() < 2 ? "Other AWS services" : group.keys().get(1);
-                    var value = group.metrics().get("UnblendedCost");
-                    if (value != null) storedCosts.add(new StoredCost(LocalDate.parse(result.timePeriod().start()), region, service, new BigDecimal(value.amount()), value.unit() == null ? "USD" : value.unit()));
-                }));
+                if (response.resultsByTime() != null) {
+                    response.resultsByTime().forEach(result -> {
+                        if (result.groups() == null || result.timePeriod() == null || result.timePeriod().start() == null) {
+                            return;
+                        }
+                        result.groups().forEach(group -> {
+                            if (group.keys() == null || group.keys().size() < 2 || group.keys().get(1) == null
+                                    || group.keys().get(1).isBlank() || group.metrics() == null) {
+                                return;
+                            }
+                            var value = group.metrics().get("UnblendedCost");
+                            if (value != null && value.amount() != null) {
+                                String region = group.keys().get(0);
+                                storedCosts.add(new StoredCost(LocalDate.parse(result.timePeriod().start()), region,
+                                        group.keys().get(1), new BigDecimal(value.amount()),
+                                        value.unit() == null ? "USD" : value.unit()));
+                            }
+                        });
+                    });
+                }
+                if (storedCosts.isEmpty()) {
+                    return new AwsLiveCostResponse(session.accountId(), range.start().toString(), range.end().minusDays(1).toString(), "USD", null, List.of(), List.of(),
+                            "COST_EXPLORER", fetchedAt, "NO_DATA", "AWS Cost Explorer returned no cost data for this period.");
+                }
                 if (!storedCosts.isEmpty()) currency = storedCosts.get(0).currency();
-                persistCosts(session.accountId(), range, storedCosts, fetchedAt);
+                persistCosts(session.accountId(), storedCosts);
                     String responseCurrency = currency;
                 List<AwsLiveCostResponse.RegionCost> regions = storedCosts.stream()
                     .collect(Collectors.groupingBy(StoredCost::region, Collectors.reducing(BigDecimal.ZERO, StoredCost::cost, BigDecimal::add)))
@@ -95,10 +113,17 @@ public class AwsLiveCostServiceImpl implements AwsLiveCostService {
     }
 
     private record DateRange(YearMonth month, LocalDate start, LocalDate end) {}
-    private void persistCosts(String accountId, DateRange range, java.util.List<StoredCost> costs, String fetchedAt) {
+    private void persistCosts(String accountId, java.util.List<StoredCost> costs) {
         for (StoredCost stored : costs) {
-            String recordKey = "COST_EXPLORER|" + accountId + "|" + stored.date() + "|" + stored.region() + "|" + stored.service();
-            var existing = billingRepository.findByRecordKey(recordKey);
+            String legacyRecordKey = "COST_EXPLORER|" + accountId + "|" + stored.date() + "|" + stored.region() + "|" + stored.service();
+            String recordKey = costExplorerRecordKey(legacyRecordKey);
+            Optional<AwsBilling> existing = Optional.empty();
+            if (legacyRecordKey.length() <= 128) {
+                existing = billingRepository.findByRecordKey(legacyRecordKey);
+            }
+            if (existing.isEmpty()) {
+                existing = billingRepository.findByRecordKey(recordKey);
+            }
             if (existing.isPresent()) {
                 existing.get().update(stored.cost(), stored.cost(), stored.currency(), false);
                 billingRepository.save(existing.get());
@@ -108,6 +133,16 @@ public class AwsLiveCostServiceImpl implements AwsLiveCostService {
                         stored.service(), "UnblendedCost", null, "COST_EXPLORER", stored.date(), stored.date(),
                         recordKey, "COST_EXPLORER"));
             }
+        }
+    }
+
+    private String costExplorerRecordKey(String legacyRecordKey) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(legacyRecordKey.getBytes(StandardCharsets.UTF_8));
+            return "COST_EXPLORER|" + HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable for Cost Explorer billing record keys.", exception);
         }
     }
 

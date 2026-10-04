@@ -34,7 +34,7 @@ export default function InsightsPage() {
   });
 
   if (!account || !connectionToken) {
-    return <Card><CardContent className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center"><Bot className="size-10 text-primary" /><h1 className="mt-5 text-xl font-semibold">Connect an AWS account first</h1><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">AI Insights uses CUR 2.0 billing data and your resource inventory.</p></CardContent></Card>;
+    return <Card><CardContent className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center"><Bot className="size-10 text-primary" /><h1 className="mt-5 text-xl font-semibold">Connect an AWS account first</h1><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">AI Insights uses persisted billing data and your resource inventory.</p></CardContent></Card>;
   }
 
   const data = insights.data;
@@ -44,14 +44,14 @@ export default function InsightsPage() {
 
   return <div className="mx-auto max-w-7xl space-y-8">
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div><p className="text-sm font-medium text-primary">Optimization</p><h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">AI Insights</h1><p className="mt-2 text-sm text-muted-foreground">Actionable findings from CUR 2.0 billing data and AWS resource inventory.</p></div>
+      <div><p className="text-sm font-medium text-primary">Optimization</p><h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">AI Insights</h1><p className="mt-2 text-sm text-muted-foreground">Actionable findings from persisted billing data and AWS resource inventory.</p></div>
       <MonthSelector value={selectedMonth} onChange={setSelectedMonth} />
       {data && <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="size-2 rounded-full bg-success" />{data.insights.length} findings generated</div>}
     </header>
 
     {insights.isLoading && <Card><CardContent className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground"><LoaderCircle className="mr-2 size-4 animate-spin" />Analyzing CUR and resource data...</CardContent></Card>}
     {insights.isError && <Card><CardContent className="flex min-h-[260px] flex-col items-center justify-center text-center"><AlertTriangle className="size-8 text-destructive" /><p className="mt-4 font-medium">Unable to generate insights</p><p className="mt-2 text-sm text-muted-foreground">{insights.error instanceof Error ? insights.error.message : "Insights could not be calculated from the available billing data."}</p><Button className="mt-5" onClick={() => insights.refetch()} variant="outline">Try again</Button></CardContent></Card>}
-    {data?.status === "NO_CUR_DATA" && <Card><CardContent className="flex min-h-[260px] flex-col items-center justify-center text-center"><CheckCircle2 className="size-9 text-muted-foreground" /><p className="mt-4 font-medium">No CUR billing data is available for this period.</p><p className="mt-2 text-sm text-muted-foreground">Import CUR 2.0 data into PostgreSQL, then refresh Insights.</p></CardContent></Card>}
+    {data?.status === "NO_CUR_DATA" && <Card><CardContent className="flex min-h-[260px] flex-col items-center justify-center text-center"><CheckCircle2 className="size-9 text-muted-foreground" /><p className="mt-4 font-medium">No billing data is available for this period.</p><p className="mt-2 text-sm text-muted-foreground">Import CUR data or fetch live AWS cost, then refresh Insights.</p></CardContent></Card>}
     {data && data.status !== "NO_CUR_DATA" && <>
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)] sm:flex-row sm:flex-wrap sm:items-center">
         <Filter label="Severity" value={severity} options={["All", "High", "Medium", "Low"]} onChange={setSeverity} />

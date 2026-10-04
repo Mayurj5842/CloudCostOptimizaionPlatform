@@ -64,11 +64,24 @@ public record AwsResourceResponse(
         }
 
         public record EbsVolumeDto(String volumeId, String volumeType, Integer size, String state,
-                                                           String availabilityZone, String attachedInstanceId, String creationTime,
-                                                           Boolean encrypted) {
+                                   String availabilityZone, String attachedInstanceId, String creationTime,
+                                   Boolean encrypted, String region, List<TagDto> tags) {
+                        public EbsVolumeDto(String volumeId, String volumeType, Integer size, String state,
+                                            String availabilityZone, String attachedInstanceId, String creationTime,
+                                            Boolean encrypted, String region) {
+                                this(volumeId, volumeType, size, state, availabilityZone, attachedInstanceId,
+                                        creationTime, encrypted, region, List.of());
+                        }
+                        public EbsVolumeDto(String volumeId, String volumeType, Integer size, String state,
+                                                                  String availabilityZone, String attachedInstanceId, String creationTime,
+                                                                  Boolean encrypted) {
+                                this(volumeId, volumeType, size, state, availabilityZone, attachedInstanceId,
+                                        creationTime, encrypted, null, List.of());
+                        }
                 public EbsVolumeDto(String volumeId, String volumeType, int size, String state,
                                                         String availabilityZone, String attachedInstanceId) {
-                        this(volumeId, volumeType, size, state, availabilityZone, attachedInstanceId, null, null);
+                                this(volumeId, volumeType, size, state, availabilityZone, attachedInstanceId,
+                                        null, null, null, List.of());
                 }
         }
 
