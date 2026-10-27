@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, Bot, CheckCircle2, CircleDollarSign, LoaderCircle, Server } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, CircleDollarSign, Lightbulb, LoaderCircle, Server, ShieldCheck } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MonthSelector } from "@/components/month-selector";
@@ -15,8 +16,51 @@ import { useMonthSelectionStore } from "@/store/month-selection-store";
 const severityStyles = {
   High: "border-destructive/30 bg-destructive/10 text-destructive",
   Medium: "border-warning/30 bg-warning/10 text-warning",
-  Low: "border-success/30 bg-success/10 text-success",
+  Low: "border-success/10 text-success",
 } as const;
+
+const PRIORITY_STYLES: Record<string, string> = {
+  High: "border-destructive/30 bg-destructive/10 text-destructive",
+  Medium: "border-warning/30 bg-warning/10 text-warning",
+  Low: "border-success/10 text-success",
+};
+
+const STATUS_STYLES: Record<string, string> = {
+  New: "border-primary/30 bg-primary/10 text-primary",
+  Applied: "border-success/30 bg-success/10 text-success",
+  Dismissed: "border-border bg-muted text-muted-foreground",
+};
+
+const NO_RESOURCE_ID = "N/A";
+const HEURISTIC_SAVINGS_LABEL = "Heuristic Estimate — Not Guaranteed";
+const INSUFFICIENT_DATA = "Insufficient Data";
+
+function realResourceId(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed && trimmed !== NO_RESOURCE_ID ? trimmed : null;
+}
+
+function normalizePriority(value: string) {
+  const normalized = value?.toLowerCase();
+  if (normalized === "high") return "High";
+  if (normalized === "medium") return "Medium";
+  if (normalized === "low") return "Low";
+  return value;
+}
+
+function normalizeStatus(value: string) {
+  const normalized = value?.toLowerCase();
+  if (normalized === "new") return "New";
+  if (normalized === "applied") return "Applied";
+  if (normalized === "dismissed") return "Dismissed";
+  return value;
+}
+
+function formatMoney(value: number | null | undefined, currency: string) {
+  if (value == null || !Number.isFinite(value)) return null;
+  const maximumFractionDigits = value !== 0 && Math.abs(value) < 1 ? 4 : 2;
+  return new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits }).format(value);
+}
 
 export default function InsightsPage() {
   const { account, connectionToken } = useCloudAccountStore();
@@ -75,6 +119,126 @@ function InsightCard({ insight, currency }: { insight: AwsInsight; currency: str
 }
 
 function RecommendationList({ recommendations, currency }: { recommendations: AwsRecommendation[]; currency: string }) {
-  const format = (value: number | null) => value == null ? "Unavailable" : new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 2 }).format(value);
-  return <Card><CardHeader><CardTitle className="text-base">Stored recommendations</CardTitle></CardHeader><CardContent className="space-y-3">{recommendations.slice(0, 5).map((item) => <div className="border-b border-border pb-3 last:border-0 last:pb-0" key={item.id}><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{item.problem}</p><span className="text-sm text-muted-foreground">Potential saving (Heuristic Estimate — Not Guaranteed): {format(item.estimatedMonthlySaving)}</span></div><p className="mt-1 text-sm text-muted-foreground">{item.service} / {item.resource} · {item.reason}</p></div>)}</CardContent></Card>;
+  return <div className="space-y-4">
+    <header className="flex items-center justify-between">
+      <div className="flex items-center gap-2"><Lightbulb className="size-5 text-warning" /><h2 className="text-lg font-semibold">Stored recommendations</h2></div>
+      <Badge variant="secondary">{recommendations.length} {recommendations.length === 1 ? "finding" : "findings"}</Badge>
+    </header>
+    <div className="space-y-4">{recommendations.slice(0, 10).map((item) => <InsightRecommendationCard currency={currency} item={item} key={item.id} />)}</div>
+  </div>;
+}
+
+function InsightRecommendationCard({ item, currency }: { item: AwsRecommendation; currency: string }) {
+  const resourceId = realResourceId(item.resourceId);
+  const resourceHref = resourceId ? `/resources?resource=${encodeURIComponent(resourceId)}` : null;
+  const priority = normalizePriority(item.priority);
+  const status = normalizeStatus(item.status);
+  const saving = formatMoney(item.estimatedMonthlySaving, currency);
+  const actualCost = formatMoney(item.currentCost, currency);
+  const periodTotal = formatMoney(item.periodTotalCost, currency);
+  const serviceName = item.service?.toLowerCase().includes("elastic block store") ? "Amazon EBS" : item.service;
+
+  return <article className="rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-card)]">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className={PRIORITY_STYLES[priority] ?? ""} variant="outline">{priority} priority</Badge>
+          <Badge className={STATUS_STYLES[status] ?? ""} variant="outline">{status}</Badge>
+          <Badge variant="secondary">{item.category}</Badge>
+        </div>
+        <h3 className="mt-3 text-base font-semibold">{item.problem}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">{serviceName} · {item.region}</p>
+      </div>
+      <div className="shrink-0 rounded-lg border border-border bg-surface-muted px-3 py-2 text-right">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Estimated saving</p>
+        {saving ? <p className="mt-0.5 text-sm font-semibold text-success">{saving}/mo</p> : <p className="mt-0.5 text-sm font-medium text-muted-foreground">{INSUFFICIENT_DATA}</p>}
+        <p className="mt-0.5 text-[10px] text-muted-foreground">{saving ? HEURISTIC_SAVINGS_LABEL : "No billing basis for a savings estimate"}</p>
+      </div>
+    </div>
+
+    <div className="mt-4 grid gap-4 border-y border-border py-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+      <EvidenceStat label="Actual cost" value={actualCost ?? INSUFFICIENT_DATA} />
+      <EvidenceStat label="Cost share" value={item.costSharePercentage != null ? `${item.costSharePercentage.toFixed(2)}%${item.concentrationThreshold != null ? ` of ${item.concentrationThreshold.toFixed(0)}% threshold` : ""}` : INSUFFICIENT_DATA} />
+      <EvidenceStat label="Period total" value={periodTotal ?? INSUFFICIENT_DATA} />
+      <EvidenceStat label="Billing period" value={item.billingMonth ?? INSUFFICIENT_DATA} />
+      <EvidenceStat label="Resource" value={resourceId ?? "Service-level finding"} />
+      <EvidenceStat label="Resource state" value={item.resourceState ? item.resourceState.charAt(0) + item.resourceState.slice(1).toLowerCase() : INSUFFICIENT_DATA} />
+      <EvidenceStat label="Data source" value={item.dataSource === "COST_EXPLORER" ? "Stored Cost Explorer billing" : item.dataSource === "CUR_2_0" ? "CUR 2.0 billing" : (item.dataSource ?? INSUFFICIENT_DATA)} />
+      <EvidenceStat label="Detected" value={item.createdAt ? new Date(item.createdAt).toLocaleDateString() : INSUFFICIENT_DATA} />
+    </div>
+
+    <div className="mt-4 grid gap-4 text-sm lg:grid-cols-2">
+      <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Why this was identified</p><WhyIdentifiedDiagram currency={currency} item={item} /></div>
+      <div><p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"><ShieldCheck className="size-3.5" />Suggested action</p><p className="mt-1 leading-6 text-muted-foreground">{item.recommendedAction ?? item.action ?? item.recommendation}</p></div>
+    </div>
+
+    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+      {resourceHref
+        ? <Button asChild size="sm" variant="outline"><Link href={resourceHref}>View resource</Link></Button>
+        : <Button disabled size="sm" variant="outline" title="Billing data for this finding has no resource identifier">View resource</Button>}
+      <div className="flex flex-col gap-2 sm:ml-auto sm:flex-row">
+        <Button asChild size="sm" variant="ghost"><Link href="/recommendations">View in Recommendations</Link></Button>
+      </div>
+    </div>
+  </article>;
+}
+
+function EvidenceStat({ label, value }: { label: string; value: string }) {
+  return <div className="min-w-0"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 break-words font-medium" title={value}>{value}</p></div>;
+}
+
+function WhyIdentifiedDiagram({ item, currency }: { item: AwsRecommendation; currency: string }) {
+  const costShare = item.costSharePercentage;
+  const threshold = item.concentrationThreshold;
+  const actual = item.currentCost;
+  const total = item.periodTotalCost;
+  const actualLabel = formatMoney(actual, currency);
+  const totalLabel = formatMoney(total, currency);
+  const resourceState = item.resourceState;
+
+  if (costShare != null || (actual != null && total != null && total > 0)) {
+    const sharePercent = costShare != null ? Math.min(Math.max(costShare, 0), 100) : null;
+    const thresholdPercent = threshold != null ? Math.min(Math.max(threshold, 0), 100) : null;
+    const servicePercent = actual != null && total != null && total > 0 ? Math.min(100, (actual / total) * 100) : null;
+    const exceeds = sharePercent != null && thresholdPercent != null && sharePercent >= thresholdPercent;
+    return <div className="mt-2 space-y-4 rounded-lg border border-border bg-surface-muted p-4">
+      {sharePercent != null && <div>
+        <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Service cost share</span><span className={`font-semibold ${exceeds ? "text-warning" : "text-foreground"}`}>{costShare?.toFixed(2)}%</span></div>
+        <div aria-label={thresholdPercent == null ? `Service cost share ${costShare?.toFixed(2)} percent` : `Service cost share ${costShare?.toFixed(2)} percent against a ${thresholdPercent.toFixed(0)} percent concentration threshold`} className="relative mt-2 h-3 rounded-full bg-muted" role="img">
+          <div className={`h-full rounded-full ${exceeds ? "bg-warning" : "bg-primary"}`} style={{ width: `${sharePercent}%` }} />
+          {thresholdPercent != null && <span className="absolute -top-1 h-5 border-l-2 border-dashed border-foreground/60" style={{ left: `${thresholdPercent}%` }} />}
+        </div>
+        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground"><span>0%</span>{thresholdPercent != null && <span>threshold {thresholdPercent.toFixed(0)}%</span>}<span>100%</span></div>
+      </div>}
+      {servicePercent != null && <div>
+        <div className="flex items-center justify-between text-xs text-muted-foreground"><span>This service vs period total</span><span className="font-semibold text-foreground">{actualLabel} / {totalLabel}</span></div>
+        <div aria-label={`Service spend ${actualLabel} of ${totalLabel} period total`} className="mt-2 flex h-3 overflow-hidden rounded-full bg-muted" role="img">
+          <div className="h-full bg-primary" style={{ width: `${servicePercent}%` }} />
+        </div>
+      </div>}
+    </div>;
+  }
+
+  if (resourceState) {
+    return <div className="mt-2 flex items-center gap-4 rounded-lg border border-warning/30 bg-warning/5 p-4">
+      <div className="flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-warning/40 bg-warning/10"><Server className="size-6 text-warning" /></div>
+      <div>
+        <p className="text-xs text-muted-foreground">Resource state</p>
+        <p className="text-sm font-semibold text-warning">{resourceState.charAt(0) + resourceState.slice(1).toLowerCase()}</p>
+        {actualLabel && <p className="text-xs text-muted-foreground">Current spend {actualLabel}</p>}
+      </div>
+    </div>;
+  }
+
+  return <div className="mt-2 flex items-center gap-4 rounded-lg border border-warning/30 bg-warning/5 p-4">
+    <svg aria-label="Rising cost trend detected" className="size-12 shrink-0 text-warning" fill="none" role="img" viewBox="0 0 48 48">
+      <path d="M9 37 L21 24 L30 31 L40 13" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
+      <path d="M32 13 L40 13 L40 21" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
+    </svg>
+    <div>
+      <p className="text-xs text-muted-foreground">Detected change</p>
+      <p className="text-sm font-semibold text-warning">Rising spend trend</p>
+      {actualLabel && <p className="text-xs text-muted-foreground">Current spend {actualLabel}</p>}
+    </div>
+  </div>;
 }

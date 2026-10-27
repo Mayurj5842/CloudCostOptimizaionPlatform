@@ -331,7 +331,7 @@ function RecommendationCard({ item, currency, onStatus }: { item: AwsRecommendat
       <div className="shrink-0 rounded-lg border border-border bg-surface-muted px-3 py-2 text-right">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Estimated saving</p>
         {saving ? <p className="mt-0.5 text-sm font-semibold text-success">{saving}/mo</p> : <p className="mt-0.5 text-sm font-medium text-muted-foreground">{INSUFFICIENT_DATA}</p>}
-        <p className="mt-0.5 text-[10px] text-muted-foreground">{saving ? HEURISTIC_SAVINGS_LABEL : "No billing basis for a savings estimate"}</p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground">{HEURISTIC_SAVINGS_LABEL}</p>
       </div>
     </div>
 

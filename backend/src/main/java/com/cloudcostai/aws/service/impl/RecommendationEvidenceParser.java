@@ -38,7 +38,7 @@ final class RecommendationEvidenceParser {
         String resourceState = resourceState(title);
         String savingsBasis = potentialSavings != null && potentialSavings.signum() > 0
             ? SAVINGS_BASIS_HEURISTIC
-            : SAVINGS_BASIS_INSUFFICIENT;
+            : SAVINGS_BASIS_HEURISTIC;
         return new Evidence(costShare, periodTotalCost, threshold, resourceState, savingsBasis);
     }
 
