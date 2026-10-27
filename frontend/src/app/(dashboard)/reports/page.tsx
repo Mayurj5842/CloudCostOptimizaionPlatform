@@ -6,7 +6,7 @@ import { useState } from "react";
 
 import { MonthSelector } from "@/components/month-selector";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { downloadAwsReportPdf, fetchAwsReport } from "@/services/aws-connection";
+import { downloadAwsReportPdf, fetchAwsDashboard, fetchAwsReport } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
 import { useMonthSelectionStore } from "@/store/month-selection-store";
 
@@ -21,6 +21,13 @@ export default function ReportsPage() {
     queryFn: () => fetchAwsReport(connectionToken as string, selectedMonth),
     enabled: Boolean(connectionToken),
     retry: false,
+  });
+  const dashboard = useQuery({
+    queryKey: ["aws-dashboard-reports", account?.accountId, connectionToken, selectedMonth],
+    queryFn: () => fetchAwsDashboard(connectionToken as string, selectedMonth),
+    enabled: Boolean(connectionToken),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   if (!account || !connectionToken) return <EmptyState title="Connect an AWS account first" message="Reports use persisted billing and AWS resource data." />;
@@ -68,11 +75,12 @@ export default function ReportsPage() {
     {data.status === "PARTIAL" && <p className="text-sm text-warning">{data.message}</p>}
     {pdfState === "success" && <p className="text-sm text-success">PDF downloaded successfully</p>}
     {pdfState === "error" && <p className="text-sm text-destructive">{pdfError}</p>}
-    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
       <Metric label="Total cost" value={money(data.summary.totalCost)} />
       <Metric label="Previous month" value={money(data.summary.previousMonthCost)} />
       <Metric label="Change" value={data.summary.changePercentage == null ? "Unavailable" : `${data.summary.changePercentage > 0 ? "+" : ""}${data.summary.changePercentage}%`} />
-      <Metric label="Potential savings" value={data.savingsSummary.available ? money(data.savingsSummary.potentialMonthlySavings) : "Unavailable"} />
+      <Metric label="Total Forecasted Cost" value={dashboard.data?.forecast?.value == null ? "Unavailable" : new Intl.NumberFormat("en-US", { style: "currency", currency: dashboard.data.forecast.currency }).format(dashboard.data.forecast.value)} />
+      {data.savingsSummary.available && <Metric label="Potential savings" value={money(data.savingsSummary.potentialMonthlySavings)} />}
     </section>
     <div className="grid gap-6 xl:grid-cols-2">
       <Card className="shadow-sm">
@@ -258,7 +266,7 @@ export default function ReportsPage() {
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  const colors: Record<string, string> = { "Total cost": "border-l-emerald-500", "Previous month": "border-l-sky-500", "Change": "border-l-amber-500", "Potential savings": "border-l-purple-500" };
+  const colors: Record<string, string> = { "Total cost": "border-l-emerald-500", "Previous month": "border-l-sky-500", "Change": "border-l-amber-500", "Total Forecasted Cost": "border-l-violet-500" };
   return <Card className={`shadow-sm border-l-4 ${colors[label] || "border-l-border"}`}><CardContent className="p-5"><p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></CardContent></Card>;
 }
 function EmptyState({ title, message, error = false }: { title: string; message: string; error?: boolean }) { const Icon = error ? AlertTriangle : CheckCircle2; return <Card><CardContent className="flex min-h-[300px] flex-col items-center justify-center text-center"><Icon className="size-9 text-muted-foreground" /><p className="mt-4 font-medium">{title}</p><p className="mt-2 text-sm text-muted-foreground">{message}</p></CardContent></Card>; }

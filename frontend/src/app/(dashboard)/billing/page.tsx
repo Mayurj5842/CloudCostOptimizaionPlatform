@@ -80,7 +80,7 @@ function AnalyticsReport({ data, resolvedTheme, budgets, month }: { data: AwsCos
     ].map(([label, value]) => <Card key={label}><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></CardContent></Card>)}</section>
     <div className="grid gap-6 xl:grid-cols-2"><TrendChart data={data} resolvedTheme={resolvedTheme} /><BreakdownCard title="Cost by AWS Service" items={data.serviceCosts} currency={data.currency} nameHeader="Service" /><BreakdownCard title="Cost by Region" items={data.regionCosts} currency={data.currency} nameHeader="Region" /></div>
     <div className="grid gap-6 xl:grid-cols-2"><DriversCard data={data} /><AnomaliesCard data={data} /></div>
-    <div className="grid gap-6 xl:grid-cols-2"><BudgetUsageCard budgets={budgets} month={month} /><Card><CardHeader><CardTitle>Potential Savings</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{data.potentialSavings.available && data.potentialSavings.monthlySavings != null ? `${format(data.potentialSavings.monthlySavings)} / month` : "No recommendations available"}</p></CardContent></Card></div>
+    <div className="grid gap-6 xl:grid-cols-1"><BudgetUsageCard budgets={budgets} month={month} /></div>
   </>;
 }
 

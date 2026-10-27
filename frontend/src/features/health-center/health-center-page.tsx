@@ -96,7 +96,7 @@ export default function HealthCenterPage() {
   const currency = analytics.data?.currency ?? insights.data?.currency ?? "USD";
   const comparison = periodComparison(analytics.data ?? null, currency);
   const attention = collectAttention(analytics.data ?? null, budgets.data ?? null, resources.data ?? null, insights.data ?? null, recommendations.data ?? null, alerts.data ?? null);
-  const savings = potentialSavings(recommendations.data ?? null, queryError(recommendations.error, "Recommendations request failed."));
+  // const savings = potentialSavings(recommendations.data ?? null, queryError(recommendations.error, "Recommendations request failed."));
   const refresh = () => {
     void Promise.all([analytics.refetch(), resources.refetch(), budgets.refetch(), insights.refetch(), alerts.refetch()]);
   };
@@ -181,14 +181,10 @@ export default function HealthCenterPage() {
         </section>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.4fr_0.8fr]">
+      <div className="grid gap-6 xl:grid-cols-1">
         <section aria-labelledby="suggestions-heading" className="space-y-3">
           <div><h2 className="text-lg font-semibold" id="suggestions-heading">Improvement Suggestions</h2><p className="mt-1 text-sm text-muted-foreground">Rule-based guidance and actions from stored recommendations.</p></div>
           <SuggestionsPanel components={score.components} recommendations={recommendations.data ?? null} />
-        </section>
-        <section aria-labelledby="potential-savings-heading" className="space-y-3">
-          <div><h2 className="text-lg font-semibold" id="potential-savings-heading">Potential Savings</h2><p className="mt-1 text-sm text-muted-foreground">Existing monthly estimates only; no pricing is inferred.</p></div>
-          <PotentialSavings value={savings.value} currency={recommendations.data?.currency ?? null} detail={savings.detail} />
         </section>
       </div>
     </>}
@@ -227,9 +223,9 @@ function SuggestionsPanel({ components, recommendations }: { components: HealthS
   return <Card><CardContent className="divide-y divide-border p-5">{suggestions.map((suggestion) => <div className="py-3 first:pt-0 last:pb-0" key={suggestion.id}><p className="text-sm font-medium">{suggestion.title}</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{suggestion.detail}</p></div>)}</CardContent></Card>;
 }
 
-function PotentialSavings({ value, currency, detail }: { value: number | null; currency: string | null; detail: string }) {
-  return <Card><CardContent className="flex min-h-40 flex-col justify-center p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Stored monthly estimate</p><p className="mt-2 text-3xl font-semibold tabular-nums">{value == null || !currency ? "Data unavailable" : formatMoney(value, currency)}</p><p className="mt-2 text-sm text-muted-foreground">{detail}</p></CardContent></Card>;
-}
+// function PotentialSavings({ value, currency, detail }: { value: number | null; currency: string | null; detail: string }) {
+//   return <Card><CardContent className="flex min-h-40 flex-col justify-center p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Stored monthly estimate</p><p className="mt-2 text-3xl font-semibold tabular-nums">{value == null || !currency ? "Data unavailable" : formatMoney(value, currency)}</p><p className="mt-2 text-sm text-muted-foreground">{detail}</p></CardContent></Card>;
+// }
 
 function RuleSummary() {
   return <div className="rounded-lg bg-surface-muted p-4"><p className="text-sm font-medium">Scoring rules</p><ul className="mt-2 space-y-1.5 text-xs leading-5 text-muted-foreground"><li>Budget: highest enabled-budget utilization (≤50%, ≤75%, ≤90%, ≤100%, above 100%).</li><li>Stability: absolute period-over-period actual-spend change (≤5%, ≤15%, ≤30%, ≤50%, above 50%).</li><li>Resources: 15 points scaled by reported healthy/status-tracked resources, plus 10 points scaled by unattached-volume share.</li><li>Optimization: 25 points less 8 per open High, 4 per Medium, and 2 per Low stored recommendation.</li></ul></div>;
@@ -286,14 +282,14 @@ function collectAttention(analytics: AwsCostAnalyticsResponse | null, budgets: B
   return items;
 }
 
-function potentialSavings(recommendations: AwsRecommendationResponse | null, error?: string) {
-  if (!recommendations || recommendations.status === "NO_DATA") return { value: null, detail: recommendations?.message ?? error ?? "No persisted recommendation estimate is available for this period." };
-  const estimates = recommendations.recommendations.filter(isOpenRecommendation)
-    .map((item) => item.estimatedMonthlySaving)
-    .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
-  if (estimates.length === 0) return { value: null, detail: "No positive stored monthly savings estimates are available for open recommendations." };
-  return { value: estimates.reduce((sum, value) => sum + value, 0), detail: "Sum of stored monthly savings estimates for open recommendations; not a guaranteed saving." };
-}
+// function potentialSavings(recommendations: AwsRecommendationResponse | null, error?: string) {
+//   if (!recommendations || recommendations.status === "NO_DATA") return { value: null, detail: recommendations?.message ?? error ?? "No persisted recommendation estimate is available for this period." };
+//   const estimates = recommendations.recommendations.filter(isOpenRecommendation)
+//     .map((item) => item.estimatedMonthlySaving)
+//     .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+//   if (estimates.length === 0) return { value: null, detail: "No positive stored monthly savings estimates are available for open recommendations." };
+//   return { value: estimates.reduce((sum, value) => sum + value, 0), detail: "Sum of stored monthly savings estimates for open recommendations; not a guaranteed saving." };
+// }
 
 function isOpenRecommendation(recommendation: AwsRecommendation) {
   const status = recommendation.status.toLowerCase();

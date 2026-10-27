@@ -149,11 +149,11 @@ function InsightRecommendationCard({ item, currency }: { item: AwsRecommendation
         <h3 className="mt-3 text-base font-semibold">{item.problem}</h3>
         <p className="mt-1 text-sm text-muted-foreground">{serviceName} · {item.region}</p>
       </div>
-      <div className="shrink-0 rounded-lg border border-border bg-surface-muted px-3 py-2 text-right">
+      {saving && <div className="shrink-0 rounded-lg border border-border bg-surface-muted px-3 py-2 text-right">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Estimated saving</p>
-        {saving ? <p className="mt-0.5 text-sm font-semibold text-success">{saving}/mo</p> : <p className="mt-0.5 text-sm font-medium text-muted-foreground">{INSUFFICIENT_DATA}</p>}
-        <p className="mt-0.5 text-[10px] text-muted-foreground">{saving ? HEURISTIC_SAVINGS_LABEL : "No billing basis for a savings estimate"}</p>
-      </div>
+        <p className="mt-0.5 text-sm font-semibold text-success">{saving}/mo</p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground">{HEURISTIC_SAVINGS_LABEL}</p>
+      </div>}
     </div>
 
     <div className="mt-4 grid gap-4 border-y border-border py-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
