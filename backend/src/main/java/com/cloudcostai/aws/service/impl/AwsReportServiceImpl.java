@@ -77,15 +77,22 @@ public class AwsReportServiceImpl implements AwsReportService {
 
     @Override
     public AwsReportResponse getReport(String connectionToken, String month) {
+        return getReport(connectionToken, AwsReportService.ReportParameters.forMonth(month));
+    }
+
+    @Override
+    public AwsReportResponse getReport(String connectionToken, AwsReportService.ReportParameters parameters) {
         var session = sessionService.getSession(connectionToken);
-        DateRange selected = resolvePeriod(month);
+        DateRange selected = resolvePeriod(parameters);
         String billingMonth = selected.start().toString().substring(0, 7);
-        String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), YearMonth.from(selected.start())).dataSource();
-        List<AwsBilling> currentRows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId()) : billingSourceResolver.rows(session.accountId(), dataSource, selected.start(), selected.end());
-        String previousSource = billingSourceResolver == null ? dataSource : billingSourceResolver.resolve(session.accountId(), YearMonth.from(selected.start()).minusMonths(1)).dataSource();
-        List<AwsBilling> previousRows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId()) : billingSourceResolver.rows(session.accountId(), previousSource, selected.start().minusMonths(1), selected.start());
-        List<AwsBilling> current = validRows(currentRows, selected);
-        List<AwsBilling> previous = validRows(previousRows, new DateRange(selected.start().minusMonths(1), selected.start()));
+        AwsBillingSourceResolver.ResolvedBilling currentBilling = billingSourceResolver == null ? null
+            : billingSourceResolver.resolve(session.accountId(), selected.start(), selected.end());
+        String dataSource = currentBilling == null ? "CUR_2_0" : currentBilling.dataSource();
+        List<AwsBilling> currentRows = currentBilling == null ? billingRepository.findByAwsAccountId(session.accountId()) : currentBilling.rows();
+        List<AwsBilling> previousRows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(session.accountId())
+            : billingSourceResolver.resolve(session.accountId(), selected.start().minusMonths(1), selected.start()).rows();
+        List<AwsBilling> current = validRows(currentRows, selected, parameters.service(), parameters.region());
+        List<AwsBilling> previous = validRows(previousRows, new DateRange(selected.start().minusMonths(1), selected.start()), null, null);
         String currency = current.stream().map(AwsBilling::getCurrency).filter(this::present).findFirst().orElse("USD");
         BigDecimal total = sum(current);
         Instant generatedAt = Instant.now();
@@ -94,11 +101,18 @@ public class AwsReportServiceImpl implements AwsReportService {
                     selected.start().toString(), selected.end().minusDays(1).toString(), generatedAt, null, currency,
                     new Summary(null, null, null, null), List.of(), List.of(), List.of(), null, "NOT_AVAILABLE",
                     List.of(), List.of(), new SavingsSummary(null, false),
-                    "No valid CUR billing data was found for the selected billing period.", List.of(), List.of());
+                    "No billing data was found for the selected billing period.", List.of(), List.of(),
+                    List.of(), List.of());
         }
 
-        Map<String, BigDecimal> services = totals(current, AwsBilling::getServiceName);
-        List<CostBreakdown> serviceBreakdown = services.entrySet().stream()
+        String groupBy = parameters.groupBy() == null ? "Service" : parameters.groupBy();
+        Function<AwsBilling, String> groupKey = row -> {
+            if ("Region".equalsIgnoreCase(groupBy)) return blank(row.getRegion(), "Unknown");
+            if ("Date".equalsIgnoreCase(groupBy)) return effectiveDate(row).toString();
+            return blank(row.getServiceName(), "Unknown");
+        };
+        Map<String, BigDecimal> grouped = totals(current, groupKey);
+        List<CostBreakdown> serviceBreakdown = grouped.entrySet().stream()
                 .map(item -> new CostBreakdown(item.getKey(), money(item.getValue())))
                 .sorted(Comparator.comparing(CostBreakdown::cost).reversed()).toList();
         List<CostPoint> trend = totals(current, row -> effectiveDate(row).toString()).entrySet().stream()
@@ -150,20 +164,37 @@ public class AwsReportServiceImpl implements AwsReportService {
             partial = true;
         }
         String status = partial ? "PARTIAL" : "SUCCESS";
+        List<String> availableServices = current.stream().map(AwsBilling::getServiceName).filter(this::present)
+                .distinct().sorted().toList();
+        List<String> availableRegions = current.stream().map(AwsBilling::getRegion).filter(this::present)
+                .distinct().sorted().toList();
         return new AwsReportResponse(session.accountId(), status, dataSource, billingMonth,
-                selected.start().toString(), selected.end().minusDays(1).toString(), generatedAt, latestUpdated(session.accountId()), currency,
+                selected.start().toString(), selected.end().minusDays(1).toString(), generatedAt, latestUpdated(session.accountId(), selected), currency,
                 new Summary(money(total), previousTotal.signum() == 0 ? null : money(previousTotal), changeAmount, changePercentage),
                 serviceBreakdown, trend, drivers, resources == null ? null : resources.summary(), resourceStatus,
                 insights, recommendations, new SavingsSummary(savings == null || savings.signum() == 0 ? null : money(savings), savings != null && savings.signum() > 0),
-                status.equals("PARTIAL") ? "Some live report sections were unavailable; CUR billing data remains valid." : null,
-                budgets, alerts);
+                status.equals("PARTIAL") ? "Some live report sections were unavailable; stored billing data remains valid." : null,
+                budgets, alerts, availableServices, availableRegions);
     }
 
     private List<AwsBilling> validRows(List<AwsBilling> rows, DateRange range) {
+        return validRows(rows, range, null, null);
+    }
+
+    private List<AwsBilling> validRows(List<AwsBilling> rows, DateRange range, String service, String region) {
         return rows.stream().filter(row -> {
             LocalDate date = effectiveDate(row);
-            return date != null && !date.isBefore(range.start()) && date.isBefore(range.end())
-                    && row.getCostAmount() != null && row.getCostAmount().signum() > 0;
+            if (date == null || date.isBefore(range.start()) || !date.isBefore(range.end())) return false;
+            if (row.getCostAmount() == null || row.getCostAmount().signum() <= 0) return false;
+            if (service != null && !service.isBlank() && !"All Services".equalsIgnoreCase(service)) {
+                String s = row.getServiceName();
+                if (s == null || !s.equalsIgnoreCase(service)) return false;
+            }
+            if (region != null && !region.isBlank() && !"All Regions".equalsIgnoreCase(region) && !"All".equalsIgnoreCase(region)) {
+                String r = row.getRegion();
+                if (r == null || !r.equalsIgnoreCase(region)) return false;
+            }
+            return true;
         }).toList();
     }
 
@@ -179,14 +210,20 @@ public class AwsReportServiceImpl implements AwsReportService {
     private boolean present(String value) { return value != null && !value.isBlank(); }
     private String blank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
 
-    private Instant latestUpdated(String accountId) {
-        return billingRepository.findByAwsAccountId(accountId).stream().map(AwsBilling::getUpdatedAt)
+    private Instant latestUpdated(String accountId, DateRange range) {
+        List<AwsBilling> rows = billingSourceResolver == null ? billingRepository.findByAwsAccountId(accountId)
+                : billingSourceResolver.resolve(accountId, range.start(), range.end()).rows();
+        return rows.stream().map(AwsBilling::getUpdatedAt)
                 .filter(value -> value != null).max(Comparator.naturalOrder())
                 .map(value -> value.toInstant(java.time.ZoneOffset.UTC)).orElse(null);
     }
 
-    private DateRange resolvePeriod(String month) {
-        if (month == null || month.isBlank()) throw new IllegalArgumentException("month is required in YYYY-MM format");
+    private DateRange resolvePeriod(AwsReportService.ReportParameters parameters) {
+        if (parameters.startDate() != null && parameters.endDate() != null) {
+            return new DateRange(parameters.startDate(), parameters.endDate().plusDays(1));
+        }
+        String month = parameters.month();
+        if (month == null || month.isBlank()) throw new IllegalArgumentException("month or startDate/endDate is required");
         YearMonth parsed = YearMonth.parse(month);
         return new DateRange(parsed.atDay(1), parsed.plusMonths(1).atDay(1));
     }

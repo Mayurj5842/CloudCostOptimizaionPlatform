@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { QueryProvider } from "./query-provider";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AwsUnauthorizedHandler } from "./aws-unauthorized-handler";
 import { getAwsConnection } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
 
@@ -16,7 +17,9 @@ export function AppProvider({ children }: AppProviderProps) {
   return (
     <QueryProvider>
       <AwsConnectionRestorer>
-        <TooltipProvider>{children}</TooltipProvider>
+        <AwsUnauthorizedHandler>
+          <TooltipProvider>{children}</TooltipProvider>
+        </AwsUnauthorizedHandler>
       </AwsConnectionRestorer>
     </QueryProvider>
   );

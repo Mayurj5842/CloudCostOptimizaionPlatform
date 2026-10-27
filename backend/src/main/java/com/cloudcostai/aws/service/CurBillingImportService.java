@@ -11,13 +11,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -42,6 +42,15 @@ public class CurBillingImportService {
         if (!properties.isEnabled()) throw new IllegalStateException("CUR billing import is disabled.");
         logger.info("CUR 2.0 import started for account={}", accountId);
         CurS3Service.Export export = s3Service.readLatest(accessKey, secretKey);
+        var accountRows = export.rows().stream().filter(row -> accountId.equals(first(row.values(),
+            "line_item_usage_account_id", "bill_payer_account_id", "line_item_account_id"))).toList();
+        boolean resourceIdColumnPresent = export.rows().stream()
+            .anyMatch(row -> row.values().containsKey("line_item_resource_id"));
+        long accountRowsWithResourceId = accountRows.stream()
+            .filter(row -> !row.values().getOrDefault("line_item_resource_id", "").isBlank())
+            .count();
+        logger.info("CUR account resource-id diagnostics: columnPresent={}, accountRows={}, accountRowsWithResourceId={}",
+            resourceIdColumnPresent, accountRows.size(), accountRowsWithResourceId);
         int inserted = 0;
         int skipped = 0;
         BigDecimal total = BigDecimal.ZERO;
@@ -60,16 +69,36 @@ public class CurBillingImportService {
             total = total.add(cost);
             periodStart = periodStart == null || start.isBefore(periodStart) ? start : periodStart;
             periodEnd = periodEnd == null || end.isAfter(periodEnd) ? end : periodEnd;
-            String key = hash(accountId + "|" + value);
-            if (billingRepository.existsByRecordKey(key)) { skipped++; continue; }
             String rowCurrency = first(value, "line_item_currency_code", "pricing_currency");
             if (!rowCurrency.isBlank()) currency = rowCurrency;
-            billingRepository.save(new AwsBilling(accountId, start, end,
-                    valueOr(value, "product_product_name", "line_item_product_code", "Unknown service"),
-                    valueOr(value, "product_region", "line_item_availability_zone", "Global / No Region"),
-                    decimalOrZero(value.get("line_item_usage_amount")), cost, currency, false,
-                    value.get("product_product_name"), value.get("line_item_usage_type"),
-                    value.get("line_item_resource_id"), value.get("line_item_line_item_type"), start, end, key));
+            String serviceName = valueOr(value, "product_product_name", "line_item_product_code", "Unknown service");
+            String region = region(value);
+            String productName = value.get("product_product_name");
+            String usageType = value.get("line_item_usage_type");
+            String resourceId = normalizedResourceId(value.get("line_item_resource_id"));
+            String lineItemType = value.get("line_item_line_item_type");
+            BigDecimal usageAmount = decimalOrZero(value.get("line_item_usage_amount"));
+            String lineItemId = first(value, "identity_line_item_id", "line_item_id");
+            String key = lineItemId.isBlank()
+                ? hash(accountId + "|" + value)
+                : hash(accountId + "|CUR_2_0|" + lineItemId);
+            Optional<AwsBilling> existing = billingRepository.findByRecordKey(key);
+            if (existing.isEmpty() && !lineItemId.isBlank()) {
+                List<AwsBilling> possibleRevisions = billingRepository.findPotentialCurRevision(accountId, start, end,
+                    serviceName, usageType, lineItemType, usageAmount, cost, rowCurrency.isBlank() ? currency : rowCurrency);
+                if (possibleRevisions.size() == 1) {
+                    existing = Optional.of(possibleRevisions.get(0));
+                }
+            }
+            if (existing.isPresent()) {
+                existing.get().refreshCurImport(serviceName, region, usageAmount, cost, currency, productName,
+                    usageType, resourceId, lineItemType, start, end, key);
+                billingRepository.save(existing.get());
+                skipped++;
+                continue;
+            }
+            billingRepository.save(new AwsBilling(accountId, start, end, serviceName, region, usageAmount, cost,
+                currency, false, productName, usageType, resourceId, lineItemType, start, end, key));
             inserted++;
         }
         logger.info("CUR records processed: {}", export.rows().size());
@@ -94,6 +123,16 @@ public class CurBillingImportService {
     }
     private String valueOr(Map<String, String> values, String first, String second, String fallback) {
         String value = first(values, first, second); return value.isBlank() ? fallback : value;
+    }
+    private String region(Map<String, String> values) {
+        String regionCode = first(values, "product_region_code", "product_region");
+        if (!regionCode.isBlank()) return regionCode.trim();
+        String availabilityZone = values.getOrDefault("line_item_availability_zone", "").trim();
+        if (availabilityZone.matches("^.+-\\d+[a-z]$")) return availabilityZone.substring(0, availabilityZone.length() - 1);
+        return "Global / No Region";
+    }
+    private String normalizedResourceId(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
     private BigDecimal decimal(String value) { try { return value == null || value.isBlank() ? null : new BigDecimal(value); } catch (NumberFormatException e) { return null; } }
     private BigDecimal decimalOrZero(String value) { BigDecimal result = decimal(value); return result == null ? BigDecimal.ZERO : result; }

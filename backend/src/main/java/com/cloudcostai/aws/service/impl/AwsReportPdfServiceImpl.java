@@ -40,7 +40,7 @@ public class AwsReportPdfServiceImpl implements AwsReportPdfService {
     @Override
     public byte[] generate(AwsReportResponse report) {
         if ("NO_DATA".equals(report.status())) {
-            throw new IllegalStateException("No valid CUR billing data was found for the selected billing period.");
+            throw new IllegalStateException("No billing data was found for the selected billing period.");
         }
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 42, 42, 48, 44);
@@ -162,15 +162,21 @@ public class AwsReportPdfServiceImpl implements AwsReportPdfService {
             document.add(new Paragraph("No recommendations for this billing period.", font(10, Font.ITALIC, Color.DARK_GRAY)));
             return;
         }
+        PdfPTable table = table(6);
+        header(table, "Recommendation", "Service", "Resource", "Current Cost", "Est. Saving", "Action");
         for (Recommendation recommendation : report.recommendations()) {
-            document.add(new Paragraph("[" + recommendation.priority() + "] " + recommendation.problem(), font(11, Font.BOLD, NAVY)));
-            rowParagraph(document, "Service", recommendation.service());
-            rowParagraph(document, "Resource", recommendation.resource());
-            rowParagraph(document, "Current Cost", money(recommendation.currentCost(), report.currency()));
-            rowParagraph(document, "Estimated Monthly Saving", money(recommendation.estimatedMonthlySaving(), report.currency()));
-            rowParagraph(document, "Evidence", recommendation.reason());
-            rowParagraph(document, "Recommended Action", recommendation.recommendedAction());
+            String title = (recommendation.problem() == null ? "" : recommendation.problem());
+            if (title.length() > 40) title = title.substring(0, 37) + "...";
+            cell(table, title, false);
+            cell(table, recommendation.service(), false);
+            cell(table, recommendation.resource() == null ? "N/A" : recommendation.resource(), false);
+            cell(table, money(recommendation.currentCost(), report.currency()), false);
+            cell(table, money(recommendation.estimatedMonthlySaving(), report.currency()), false);
+            String action = recommendation.recommendedAction() == null ? "" : recommendation.recommendedAction();
+            if (action.length() > 40) action = action.substring(0, 37) + "...";
+            cell(table, action, false);
         }
+        document.add(table);
     }
 
     private void addBillingData(Document document, AwsReportResponse report) throws DocumentException {

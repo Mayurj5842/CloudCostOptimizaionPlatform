@@ -9,5 +9,7 @@ import java.util.UUID;
 public interface BudgetAlertRepository extends JpaRepository<BudgetAlert, UUID> {
     List<BudgetAlert> findByBudgetIdOrderByTriggeredAtDesc(UUID budgetId);
     List<BudgetAlert> findByStatusOrderByTriggeredAtDesc(String status);
+    List<BudgetAlert> findByAwsAccountIdOrderByTriggeredAtDesc(String awsAccountId);
     boolean existsByBudgetIdAndThresholdPercentAndAlertPeriod(UUID budgetId, Integer thresholdPercent, String alertPeriod);
+    boolean existsByEventKey(String eventKey);
 }

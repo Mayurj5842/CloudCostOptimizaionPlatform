@@ -22,7 +22,7 @@ class AwsBillingSourceResolverTest {
     @Mock private AwsBillingRepository billingRepository;
 
     @Test
-    void resolvesDashboardBillingOnlyFromCurRows() {
+        void resolvesToCurWhenTheMonthHasNoPersistedLiveRows() {
         String accountId = "123456789012";
         YearMonth month = YearMonth.of(2026, 8);
         AwsBilling curRow = new AwsBilling(accountId, month.atDay(2), month.atDay(3), "Amazon EC2", "us-east-1",
@@ -35,7 +35,7 @@ class AwsBillingSourceResolverTest {
 
         assertThat(result.dataSource()).isEqualTo("CUR_2_0");
         assertThat(result.rows()).containsExactly(curRow);
-        verify(billingRepository, never()).findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "COST_EXPLORER");
+        verify(billingRepository).findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "COST_EXPLORER");
     }
 
     @Test
@@ -49,11 +49,44 @@ class AwsBillingSourceResolverTest {
         when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "COST_EXPLORER"))
                 .thenReturn(List.of(septemberLive));
 
-        var result = new AwsBillingSourceResolver(billingRepository).resolveForDisplay(accountId,
+        var result = new AwsBillingSourceResolver(billingRepository).resolve(accountId,
                 LocalDate.of(2026, 8, 1), LocalDate.of(2026, 10, 1));
 
         assertThat(result.dataSource()).isEqualTo("MIXED");
         assertThat(result.rows()).containsExactly(augustCur, septemberLive);
+    }
+
+    @Test
+    void liveMonthPrecedenceAppliesToPartialDateRanges() {
+        String accountId = "123456789012";
+        AwsBilling curAtRangeStart = row(accountId, LocalDate.of(2026, 9, 29), "20.00", "CUR EC2", "CUR_2_0");
+        AwsBilling liveEarlierInMonth = row(accountId, LocalDate.of(2026, 9, 10), "12.50", "Live EC2", "COST_EXPLORER");
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "CUR_2_0"))
+                .thenReturn(List.of(curAtRangeStart));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "COST_EXPLORER"))
+                .thenReturn(List.of(liveEarlierInMonth));
+
+        var result = new AwsBillingSourceResolver(billingRepository).resolve(accountId,
+                LocalDate.of(2026, 9, 28), LocalDate.of(2026, 10, 1));
+
+        assertThat(result.dataSource()).isEqualTo("COST_EXPLORER");
+        assertThat(result.rows()).isEmpty();
+    }
+
+    @Test
+    void resolutionUsesOnlyTheRequestedAccount() {
+        String connectedAccount = "123456789012";
+        String otherAccount = "210987654321";
+        AwsBilling connectedLive = row(connectedAccount, LocalDate.of(2026, 9, 10), "12.50", "Live EC2", "COST_EXPLORER");
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(connectedAccount, "CUR_2_0"))
+                .thenReturn(List.of());
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(connectedAccount, "COST_EXPLORER"))
+                .thenReturn(List.of(connectedLive));
+
+        var result = new AwsBillingSourceResolver(billingRepository).resolve(connectedAccount, YearMonth.of(2026, 9));
+
+        assertThat(result.rows()).containsExactly(connectedLive);
+        verify(billingRepository, never()).findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(otherAccount, "COST_EXPLORER");
     }
 
     private AwsBilling row(String accountId, LocalDate date, String cost, String service, String source) {

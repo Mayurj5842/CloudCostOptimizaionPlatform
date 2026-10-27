@@ -37,7 +37,7 @@ public class AwsBilling {
     @Column(name = "usage_type", length = 255)
     private String usageType;
 
-    @Column(name = "resource_id", length = 500)
+    @Column(name = "resource_id", nullable = false, length = 500)
     private String resourceId;
 
     @Column(name = "line_item_type", length = 100)
@@ -122,7 +122,7 @@ public class AwsBilling {
         this.region = region;
         this.productName = productName;
         this.usageType = usageType;
-        this.resourceId = resourceId;
+        this.resourceId = ResourceIds.store(resourceId);
         this.lineItemType = lineItemType;
         this.usageStartDate = usageStartDate;
         this.usageEndDate = usageEndDate;
@@ -142,6 +142,29 @@ public class AwsBilling {
         this.currency = currency;
         this.estimated = estimated;
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public void refreshCurImport(String serviceName, String region, BigDecimal usageAmount, BigDecimal costAmount,
+                                 String currency, String productName, String usageType, String resourceId,
+                                 String lineItemType, LocalDate usageStartDate, LocalDate usageEndDate) {
+        refreshCurImport(serviceName, region, usageAmount, costAmount, currency, productName, usageType,
+            resourceId, lineItemType, usageStartDate, usageEndDate, this.recordKey);
+    }
+
+    public void refreshCurImport(String serviceName, String region, BigDecimal usageAmount, BigDecimal costAmount,
+                                 String currency, String productName, String usageType, String resourceId,
+                                 String lineItemType, LocalDate usageStartDate, LocalDate usageEndDate,
+                                 String recordKey) {
+        this.serviceName = serviceName;
+        this.region = region;
+        this.productName = productName;
+        this.usageType = usageType;
+        this.resourceId = ResourceIds.store(resourceId);
+        this.lineItemType = lineItemType;
+        this.usageStartDate = usageStartDate;
+        this.usageEndDate = usageEndDate;
+        this.recordKey = recordKey;
+        update(usageAmount, costAmount, currency, false);
     }
 
     public UUID getId() {

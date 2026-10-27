@@ -3,6 +3,7 @@ package com.cloudcostai.aws.service.impl;
 import com.cloudcostai.aws.config.AwsBillingSyncProperties;
 import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
+import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsInsightService;
 import com.cloudcostai.aws.service.AwsRecommendationService;
@@ -61,8 +62,40 @@ class AwsReportServiceImplTest {
         assertThat(response.summary().totalCost()).isNull();
     }
 
+        @Test
+        void reportUsesPersistedCostExplorerRowsForTheSelectedMonth() {
+        String account = "123456789012";
+        when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+            "access", "secret", "ap-south-1", account, Instant.now().plusSeconds(600)));
+        AwsBilling septemberCur = row(account, "2026-09-10", "20.00", "september-cur");
+        AwsBilling septemberLive = sourcedRow(account, "2026-09-10", "12.50", "COST_EXPLORER");
+        AwsBilling augustCur = row(account, "2026-08-10", "8.00", "august-cur");
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(account, "CUR_2_0"))
+            .thenReturn(List.of(augustCur, septemberCur));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(account, "COST_EXPLORER"))
+            .thenReturn(List.of(septemberLive));
+
+        AwsReportServiceImpl service = new AwsReportServiceImpl(sessionService, billingRepository, billingProperties,
+            insightService, recommendationService, resourceService, null,
+            new AwsBillingSourceResolver(billingRepository));
+        var response = service.getReport("token", "2026-09");
+
+        assertThat(response.dataSource()).isEqualTo("COST_EXPLORER");
+        assertThat(response.summary().totalCost()).isEqualByComparingTo("12.50");
+        assertThat(response.summary().previousMonthCost()).isEqualByComparingTo("8.00");
+        assertThat(response.serviceBreakdown()).extracting("cost")
+            .containsExactly(new BigDecimal("12.50"));
+        }
+
     private AwsBilling row(String account, String date, String cost, String key) {
         LocalDate usage = LocalDate.parse(date);
         return new AwsBilling(account, usage, usage.plusDays(1), "Amazon EC2", "ap-south-1", BigDecimal.ONE, new BigDecimal(cost), "USD", false, "Amazon EC2", "Usage", key, "Usage", usage, usage.plusDays(1), key);
+    }
+
+    private AwsBilling sourcedRow(String account, String date, String cost, String source) {
+        LocalDate usage = LocalDate.parse(date);
+        return new AwsBilling(account, usage, usage, "Amazon EC2", "ap-south-1", BigDecimal.ONE,
+                new BigDecimal(cost), "USD", false, "Amazon EC2", "Usage", null, "Usage",
+                usage, usage, source + usage, source);
     }
 }

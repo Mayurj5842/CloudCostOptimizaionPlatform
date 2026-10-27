@@ -1,10 +1,12 @@
 package com.cloudcostai.security;
 
+import com.cloudcostai.aws.repository.AwsConnectionSessionRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.impl.AwsConnectionServiceImpl.AwsIdentity;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -25,6 +27,7 @@ class AwsConnectionAuthenticationFilterTest {
     void unrelatedAwsApiStillRequiresAwsToken() {
         assertThat(filter.shouldSkip(request("/api/aws/resources"))).isFalse();
         assertThat(filter.shouldSkip(request("/api/aws/live-cost"))).isFalse();
+        assertThat(filter.shouldSkip(request("/api/aws/optimization/simulator"))).isFalse();
     }
 
     @Test
@@ -75,6 +78,8 @@ class AwsConnectionAuthenticationFilterTest {
         });
 
         assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getContentAsString())
+            .contains("AWS connection expired. Please reconnect your AWS account.");
     }
 
     private MockHttpServletRequest request(String path) {
@@ -85,7 +90,7 @@ class AwsConnectionAuthenticationFilterTest {
         private final AwsConnectionSessionService sessionService;
 
         private TestableFilter() {
-            this(new AwsConnectionSessionService());
+            this(new AwsConnectionSessionService(Mockito.mock(AwsConnectionSessionRepository.class)));
         }
 
         private TestableFilter(AwsConnectionSessionService sessionService) {

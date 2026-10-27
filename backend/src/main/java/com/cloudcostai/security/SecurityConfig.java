@@ -49,6 +49,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/aws/insights").permitAll()
                         .requestMatchers("/api/aws/reports/**").permitAll()
                         .requestMatchers("/api/aws/recommendations/**").permitAll()
+                        .requestMatchers("/api/aws/optimization/simulator").permitAll()
                         .requestMatchers("/api/budgets/**").permitAll()
                         .requestMatchers("/api/alerts/**").permitAll()
                         .requestMatchers("/api/recommendations/**").permitAll()

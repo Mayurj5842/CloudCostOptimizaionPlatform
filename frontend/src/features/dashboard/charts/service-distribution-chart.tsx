@@ -93,7 +93,7 @@ export default function ServiceDistributionChart({ range, month }: { range: stri
         <div className="mt-3">
           {distribution.isLoading && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading cost data...</p>}
           {distribution.isError && !distribution.data && <div className="flex h-[320px] flex-col items-center justify-center gap-3 text-sm text-destructive"><p>{distribution.error instanceof Error ? distribution.error.message : "Unable to load cost data."}</p><button type="button" className="rounded-lg border border-border px-3 py-1 text-foreground" onClick={() => distribution.refetch()}>Try again</button></div>}
-          {distribution.data?.dataStatus === "NO_BILLING_DATA" && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No CUR billing data available for the selected period.</p>}
+          {distribution.data?.dataStatus === "NO_BILLING_DATA" && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No billing data is available for the selected period.</p>}
           {distribution.isSuccess && serviceDistribution.length === 0 && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No billing data available for the selected period.</p>}
           {distribution.isSuccess && serviceDistribution.length > 0 && <ReactECharts
             key={resolvedTheme}

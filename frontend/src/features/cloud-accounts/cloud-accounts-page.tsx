@@ -65,6 +65,7 @@ export default function CloudAccountsPage() {
       ]);
       setStep(-1);
       setFormOpen(false);
+      router.replace("/dashboard");
     } catch (error) {
       setConnectionStatus("error");
       setStep(-1);

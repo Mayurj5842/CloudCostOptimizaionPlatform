@@ -49,6 +49,15 @@ public class Budget {
     @Column(name = "alert_thresholds", nullable = false)
     private String alertThresholds;
 
+    @Column(name = "service_name")
+    private String serviceName;
+
+    @Column(nullable = false)
+    private boolean enabled;
+
+    @Column(name = "spike_threshold_percent", nullable = false)
+    private Integer spikeThresholdPercent;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -60,6 +69,13 @@ public class Budget {
 
     public Budget(String userId, String awsAccountId, String name, BigDecimal amount, String currency,
                   String period, LocalDate startDate, LocalDate endDate, String status, List<Integer> alertThresholds) {
+        this(userId, awsAccountId, name, amount, currency, period, startDate, endDate, status,
+            alertThresholds, null, true, 50);
+        }
+
+        public Budget(String userId, String awsAccountId, String name, BigDecimal amount, String currency,
+              String period, LocalDate startDate, LocalDate endDate, String status, List<Integer> alertThresholds,
+              String serviceName, boolean enabled, Integer spikeThresholdPercent) {
         this.id = UUID.randomUUID();
         this.userId = userId;
         this.awsAccountId = awsAccountId;
@@ -71,6 +87,9 @@ public class Budget {
         this.endDate = endDate;
         this.status = status;
         this.alertThresholds = normalizeThresholds(alertThresholds);
+        this.serviceName = normalizeServiceName(serviceName);
+        this.enabled = enabled;
+        this.spikeThresholdPercent = spikeThresholdPercent == null ? 50 : spikeThresholdPercent;
         this.createdAt = LocalDateTime.now();
         this.updatedAt = this.createdAt;
     }
@@ -88,9 +107,18 @@ public class Budget {
         this.updatedAt = LocalDateTime.now();
     }
 
+    public void update(String name, BigDecimal amount, String currency, String period,
+                       LocalDate startDate, LocalDate endDate, String status, List<Integer> alertThresholds,
+                       String serviceName, boolean enabled, Integer spikeThresholdPercent) {
+        update(name, amount, currency, period, startDate, endDate, status, alertThresholds);
+        this.serviceName = normalizeServiceName(serviceName);
+        this.enabled = enabled;
+        this.spikeThresholdPercent = spikeThresholdPercent;
+    }
+
     public List<Integer> getAlertThresholdsList() {
         if (alertThresholds == null || alertThresholds.isBlank()) {
-            return List.of(50, 80, 90, 100);
+            return List.of(50, 75, 90, 100);
         }
         return Arrays.stream(alertThresholds.split(","))
                 .map(String::trim)
@@ -109,8 +137,12 @@ public class Budget {
     }
 
     private static String normalizeThresholds(List<Integer> thresholds) {
-        List<Integer> values = thresholds == null || thresholds.isEmpty() ? List.of(50, 80, 90, 100) : thresholds.stream().filter(v -> v != null && v > 0 && v <= 100).distinct().sorted().toList();
+        List<Integer> values = thresholds == null || thresholds.isEmpty() ? List.of(50, 75, 90, 100) : thresholds.stream().filter(v -> v != null && v > 0 && v <= 100).distinct().sorted().toList();
         return String.join(",", values.stream().map(String::valueOf).toList());
+    }
+
+    private static String normalizeServiceName(String serviceName) {
+        return serviceName == null || serviceName.isBlank() ? null : serviceName.trim();
     }
 
     public UUID getId() { return id; }
@@ -124,6 +156,10 @@ public class Budget {
     public LocalDate getEndDate() { return endDate; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; this.updatedAt = LocalDateTime.now(); }
+    public String getServiceName() { return serviceName; }
+    public boolean isEnabled() { return enabled; }
+    public Integer getSpikeThresholdPercent() { return spikeThresholdPercent; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; this.updatedAt = LocalDateTime.now(); }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
 }

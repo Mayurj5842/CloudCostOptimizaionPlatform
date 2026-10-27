@@ -30,8 +30,8 @@ class AwsReportPdfServiceImplTest {
     @Test
     void refusesNoDataReport() {
         assertThatThrownBy(() -> service.generate(report("NO_DATA")))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("No valid CUR");
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("No billing data");
     }
 
     private AwsReportResponse report(String status) {

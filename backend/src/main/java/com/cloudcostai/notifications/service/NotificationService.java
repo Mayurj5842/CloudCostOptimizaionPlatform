@@ -6,6 +6,7 @@ import com.cloudcostai.aws.repository.AwsAccountRepository;
 import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.service.AwsCostAnalyticsService;
 import com.cloudcostai.billing.model.Budget;
+import com.cloudcostai.billing.model.BudgetAlert;
 import com.cloudcostai.billing.repository.BudgetRepository;
 import com.cloudcostai.notifications.dto.NotificationHistoryResponse;
 import com.cloudcostai.notifications.dto.NotificationFeedResponse;
@@ -109,6 +110,32 @@ public class NotificationService {
     public List<NotificationHistoryResponse> history(UUID userId, String accountId) {
         return logRepository.findTop50ByUserIdAndAwsAccountIdOrderByCreatedAtDesc(userId, normalizeAccountId(accountId))
                 .stream().map(NotificationHistoryResponse::from).toList();
+    }
+
+    @Transactional
+    public void sendBudgetAlert(BudgetAlert alert) {
+        if (alert.getAwsAccountId() == null || alert.getEventKey() == null) return;
+        for (NotificationPreference preference : preferenceRepository.findByEmailNotificationsEnabledTrue()) {
+            if (!preference.isEmailNotificationsEnabled()
+                    || !alert.getAwsAccountId().equals(preference.getAwsAccountId())
+                    || !allowsBudgetAlert(preference, alert)) {
+                continue;
+            }
+            BigDecimal usage = percentage(alert.getActualSpend(), alert.getBudgetAmount());
+            sendEvent(preference, alert.getAlertType(), "BUDGET_ALERT:" + alert.getEventKey(), alert.getTitle(),
+                    alert.getAwsAccountId(), alert.getAlertPeriod(), alert.getActualSpend(), alert.getBudgetAmount(),
+                    usage, alert.getCurrency() == null ? "USD" : alert.getCurrency(), alert.getMessage());
+        }
+    }
+
+    private boolean allowsBudgetAlert(NotificationPreference preference, BudgetAlert alert) {
+        return switch (alert.getAlertType()) {
+            case "BUDGET_THRESHOLD" -> preference.isBudgetAlertEnabled()
+                    && alert.getThresholdPercent() >= preference.getBudgetAlertThreshold();
+            case "BUDGET_EXCEEDED" -> preference.isBudgetExceededEnabled();
+            case "SPENDING_SPIKE" -> preference.isCostAnomalyEnabled();
+            default -> false;
+        };
     }
 
     @Transactional(readOnly = true)

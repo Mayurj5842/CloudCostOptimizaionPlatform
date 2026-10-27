@@ -25,24 +25,30 @@ public class AwsBillingSourceResolver {
     public ResolvedBilling resolve(String accountId, YearMonth month) {
         LocalDate start = month.atDay(1);
         LocalDate end = month.plusMonths(1).atDay(1);
-        return new ResolvedBilling(CUR, rows(accountId, CUR, start, end), start, end);
+        return resolve(accountId, start, end);
     }
 
-    public ResolvedBilling resolveForDisplay(String accountId, LocalDate start, LocalDate end) {
+    /** Cost Explorer takes precedence per account/month when persisted; CUR fills months without live rows. */
+    public ResolvedBilling resolve(String accountId, LocalDate start, LocalDate end) {
         List<AwsBilling> curRows = rows(accountId, CUR, start, end);
-        List<AwsBilling> liveRows = rows(accountId, COST_EXPLORER, start, end);
-        Set<YearMonth> liveMonths = liveRows.stream()
+        List<AwsBilling> allLiveRows = billingRepository
+            .findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, COST_EXPLORER);
+        Set<YearMonth> liveMonths = allLiveRows.stream()
                 .map(this::effectiveDate)
                 .filter(date -> date != null)
                 .map(YearMonth::from)
+            .filter(month -> month.atDay(1).isBefore(end) && month.plusMonths(1).atDay(1).isAfter(start))
                 .collect(Collectors.toSet());
+        List<AwsBilling> liveRows = allLiveRows.stream()
+            .filter(row -> inRange(row, start, end))
+            .toList();
         List<AwsBilling> retainedCurRows = curRows.stream()
                 .filter(row -> effectiveDate(row) == null || !liveMonths.contains(YearMonth.from(effectiveDate(row))))
                 .toList();
         List<AwsBilling> combinedRows = Stream.concat(retainedCurRows.stream(), liveRows.stream())
                 .sorted(Comparator.comparing(this::effectiveDate))
                 .toList();
-        String source = liveRows.isEmpty() ? CUR : retainedCurRows.isEmpty() ? COST_EXPLORER : "MIXED";
+        String source = liveMonths.isEmpty() ? CUR : retainedCurRows.isEmpty() ? COST_EXPLORER : "MIXED";
         return new ResolvedBilling(source, combinedRows, start, end);
     }
 
@@ -54,6 +60,11 @@ public class AwsBillingSourceResolver {
 
     private LocalDate effectiveDate(AwsBilling row) {
         return row.getUsageStartDate() == null ? row.getBillingPeriodStart() : row.getUsageStartDate();
+    }
+
+    private boolean inRange(AwsBilling row, LocalDate start, LocalDate end) {
+        LocalDate date = effectiveDate(row);
+        return date != null && !date.isBefore(start) && date.isBefore(end);
     }
 
     public record ResolvedBilling(String dataSource, List<AwsBilling> rows, LocalDate start, LocalDate end) {}

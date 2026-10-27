@@ -34,7 +34,9 @@ public record AwsReportResponse(
         SavingsSummary savingsSummary,
         String message,
         List<BudgetResponse> budgets,
-        List<AlertResponse> alerts
+        List<AlertResponse> alerts,
+        List<String> availableServices,
+        List<String> availableRegions
 ) {
         public AwsReportResponse(String accountId, String status, String dataSource, String billingMonth,
                      String billingPeriodStart, String billingPeriodEnd, Instant generatedAt,
@@ -45,7 +47,8 @@ public record AwsReportResponse(
                      SavingsSummary savingsSummary, String message) {
         this(accountId, status, dataSource, billingMonth, billingPeriodStart, billingPeriodEnd, generatedAt,
             lastUpdated, currency, summary, serviceBreakdown, costTrend, topCostDrivers, resourceSummary,
-            resourceStatus, insights, recommendations, savingsSummary, message, List.of(), List.of());
+            resourceStatus, insights, recommendations, savingsSummary, message, List.of(), List.of(),
+            List.of(), List.of());
         }
     public record Summary(BigDecimal totalCost, BigDecimal previousMonthCost,
                           BigDecimal changeAmount, BigDecimal changePercentage) {}

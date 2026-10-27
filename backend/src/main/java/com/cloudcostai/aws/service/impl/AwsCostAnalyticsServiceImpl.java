@@ -72,7 +72,7 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
         DateRange selected = dateRange(period, month);
         YearMonth selectedMonth = YearMonth.from(selected.start());
         AwsBillingSourceResolver.ResolvedBilling selectedBilling = billingSourceResolver == null ? null
-            : billingSourceResolver.resolveForDisplay(session.accountId(), selected.start(), selected.end());
+            : billingSourceResolver.resolve(session.accountId(), selected.start(), selected.end());
         String source = selectedBilling == null ? "CUR_2_0" : selectedBilling.dataSource();
         List<AwsBilling> rows = selectedBilling == null
             ? sourceRows(session.accountId(), selectedMonth, selected.start(), selected.end()) : selectedBilling.rows();
@@ -87,7 +87,7 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
         DateRange selected = dateRange(period, month);
         YearMonth selectedMonth = YearMonth.from(selected.start());
         AwsBillingSourceResolver.ResolvedBilling selectedBilling = billingSourceResolver == null ? null
-            : billingSourceResolver.resolveForDisplay(accountId, selected.start(), selected.end());
+            : billingSourceResolver.resolve(accountId, selected.start(), selected.end());
         String source = selectedBilling == null ? "CUR_2_0" : selectedBilling.dataSource();
         List<AwsBilling> rows = selectedBilling == null
             ? sourceRows(accountId, selectedMonth, selected.start(), selected.end()) : selectedBilling.rows();
@@ -124,15 +124,25 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
                 new Summary(null, null, null, null, null, previous, null, null), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 budget(accountId, selected, List.of(), currency), savings(accountId, currency), "NO_CUR_DATA",
                 source, selected.start().toString(), selected.end().toString(), null,
-                previous == null ? "No CUR data available for the selected billing period." : "No CUR data available for the selected billing period; previous-period data exists.");
+            previous == null ? "No billing data is available for the selected period." : "No billing data is available for the selected period; previous-period data exists.");
     }
 
     private Budget budget(String accountId, DateRange selected, List<AwsBilling> rows, String currency) {
-        com.cloudcostai.billing.model.Budget configured = budgetRepository.findFirstByAwsAccountIdAndStatusOrderByCreatedAtDesc(accountId, "ACTIVE").orElse(null);
+        com.cloudcostai.billing.model.Budget configured = applicableAccountBudget(accountId, selected);
         if (configured == null) return new Budget(false, null, null, null, currency);
         BigDecimal actual = rows.isEmpty() ? null : sum(rows);
         BigDecimal usage = actual == null || configured.getAmount() == null || configured.getAmount().signum() == 0 ? null : actual.multiply(BigDecimal.valueOf(100)).divide(configured.getAmount(), 2, RoundingMode.HALF_UP);
         return new Budget(true, configured.getAmount(), actual, usage, configured.getCurrency());
+    }
+
+    private com.cloudcostai.billing.model.Budget applicableAccountBudget(String accountId, DateRange selected) {
+        if (budgetRepository == null) return null;
+        YearMonth month = YearMonth.from(selected.start());
+        LocalDate monthEnd = month.atEndOfMonth();
+        LocalDate monthStart = month.atDay(1);
+        return budgetRepository.findFirstByAwsAccountIdAndServiceNameIsNullAndEnabledTrueAndStartDateLessThanEqualAndEndDateGreaterThanEqualOrderByCreatedAtDesc(accountId, monthEnd, monthStart)
+            .or(() -> budgetRepository.findFirstByAwsAccountIdAndEnabledTrueAndStartDateLessThanEqualAndEndDateGreaterThanEqualOrderByCreatedAtDesc(accountId, monthEnd, monthStart))
+            .orElse(null);
     }
 
     private PotentialSavings savings(String accountId, String currency) {
@@ -142,7 +152,7 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
     }
 
     private List<AwsBilling> sourceRows(String accountId, YearMonth month, LocalDate start, LocalDate end) {
-        if (billingSourceResolver != null) return billingSourceResolver.resolveForDisplay(accountId, start, end).rows();
+        if (billingSourceResolver != null) return billingSourceResolver.resolve(accountId, start, end).rows();
         return billingRepository.findByAwsAccountId(accountId).stream().filter(row -> inRange(row, start, end)).toList();
     }
 
@@ -160,9 +170,11 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
         BigDecimal average = points.subList(0, points.size() - 1).stream().map(CostPoint::cost).reduce(BigDecimal.ZERO, BigDecimal::add)
                 .divide(BigDecimal.valueOf(points.size() - 1), 2, RoundingMode.HALF_UP);
         if (average.signum() == 0) return List.of();
-        return points.stream().map(point -> point.cost().subtract(average).multiply(BigDecimal.valueOf(100)).divide(average, 2, RoundingMode.HALF_UP))
-                .filter(change -> change.compareTo(BigDecimal.valueOf(50)) >= 0)
-                .map(change -> new CostAnomaly(points.get(0).date(), points.get(0).cost(), change)).toList();
+        return points.stream()
+            .map(point -> new CostAnomaly(point.date(), point.cost(),
+                point.cost().subtract(average).multiply(BigDecimal.valueOf(100)).divide(average, 2, RoundingMode.HALF_UP)))
+            .filter(anomaly -> anomaly.percentageAboveAverage().compareTo(BigDecimal.valueOf(50)) >= 0)
+            .toList();
     }
 
     private DateRange dateRange(String period, String month) {

@@ -10,12 +10,19 @@ import { useTheme } from "@/providers/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getChartTheme } from "@/lib/chart-theme";
-import { fetchAwsCostAnalytics, type AwsCostAnalyticsResponse } from "@/services/aws-connection";
+import { fetchAwsCostAnalytics, fetchBudgets, type AwsCostAnalyticsResponse, type Budget } from "@/services/aws-connection";
+import { BUDGET_TONE_LABEL, summarizeBudgets, worstBudgetTone } from "@/features/budgets/budget-metrics";
+import { BudgetUsageDialog } from "@/features/budgets/budget-usage-dialog";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
+import { useMonthSelectionStore } from "@/store/month-selection-store";
+
+type BreakdownView = "Service" | "Region" | "Account";
+type TooltipEntry = { axisValue?: string | number; data?: unknown; seriesName?: string };
 
 export default function BillingPage() {
   const { resolvedTheme } = useTheme();
-  const [month, setMonth] = React.useState(() => new Date().toISOString().slice(0, 7));
+  const month = useMonthSelectionStore((state) => state.selectedMonth);
+  const setMonth = useMonthSelectionStore((state) => state.setSelectedMonth);
   const { account, connectionToken } = useCloudAccountStore();
   const analytics = useQuery({
     queryKey: ["aws-cost-analytics", account?.accountId, connectionToken, month],
@@ -25,6 +32,12 @@ export default function BillingPage() {
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+  });
+  const budgets = useQuery({
+    queryKey: ["budgets", account?.accountId, month],
+    queryFn: () => fetchBudgets(connectionToken as string, month),
+    enabled: Boolean(connectionToken),
+    retry: false,
   });
 
   if (!account || !connectionToken) {
@@ -48,33 +61,33 @@ export default function BillingPage() {
     </header>
     {analytics.isLoading && <LoadingState />}
     {analytics.isError && <ErrorState onRetry={() => analytics.refetch()} />}
-    {analytics.data && <AnalyticsReport data={analytics.data} resolvedTheme={resolvedTheme} />}
+    {analytics.data && <AnalyticsReport data={analytics.data} resolvedTheme={resolvedTheme} budgets={budgets} month={month} />}
   </div>;
 }
 
-function AnalyticsReport({ data, resolvedTheme }: { data: AwsCostAnalyticsResponse; resolvedTheme?: string }) {
+function AnalyticsReport({ data, resolvedTheme, budgets, month }: { data: AwsCostAnalyticsResponse; resolvedTheme?: string; budgets: ReturnType<typeof useQuery<Budget[]>>; month: string }) {
   const format = (value: number | null) => value == null ? "Unavailable" : formatCurrency(value, data.currency);
   const isUnavailable = data.dataStatus === "UNAVAILABLE" || data.dataStatus === "NO_CUR_DATA";
   
   if (isUnavailable) {
-    return <Card><CardContent className="flex min-h-[280px] flex-col items-center justify-center text-center"><BarChart3 className="size-10 text-muted-foreground" /><p className="mt-4 font-medium">Billing data is not available yet.</p><p className="mt-2 text-sm text-muted-foreground">Please run billing synchronization after CUR 2.0 data is delivered to S3.</p></CardContent></Card>;
+    return <Card><CardContent className="flex min-h-[280px] flex-col items-center justify-center text-center"><BarChart3 className="size-10 text-muted-foreground" /><p className="mt-4 font-medium">Billing data is not available yet.</p><p className="mt-2 text-sm text-muted-foreground">Import CUR data or fetch live AWS cost for the selected period.</p></CardContent></Card>;
   }
   
   return <>
-    <p className="text-xs text-muted-foreground">Latest AWS billing data from {data.dataSource ?? "AWS CUR 2.0 / PostgreSQL"} for {data.period.start} through {data.period.end}. {data.lastUpdated ? `Last updated: ${new Date(data.lastUpdated).toLocaleString()}.` : "Last updated: Unavailable."} Status: {data.dataStatus}.</p>
+    <p className="text-xs text-muted-foreground">Latest AWS billing data from {data.dataSource ?? "PostgreSQL"} for {data.period.start} through {data.period.end}. {data.lastUpdated ? `Last updated: ${new Date(data.lastUpdated).toLocaleString()}.` : "Last updated: Unavailable."} Status: {data.dataStatus}.</p>
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{[
       ["Total", format(data.summary.totalCost)], ["Previous period", format(data.summary.previousPeriodCost)], ["Difference", format(data.summary.difference)], ["Change", data.summary.percentageChange == null ? "Unavailable" : `${data.summary.percentageChange}%`], ["Daily average", format(data.summary.dailyAverage)],
     ].map(([label, value]) => <Card key={label}><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></CardContent></Card>)}</section>
-    <div className="grid gap-6 xl:grid-cols-2"><TrendChart data={data} resolvedTheme={resolvedTheme} /><BreakdownCard title="Cost by AWS Service" items={data.serviceCosts} currency={data.currency} /><BreakdownCard title="Cost by Region" items={data.regionCosts} currency={data.currency} /></div>
+    <div className="grid gap-6 xl:grid-cols-2"><TrendChart data={data} resolvedTheme={resolvedTheme} /><BreakdownCard title="Cost by AWS Service" items={data.serviceCosts} currency={data.currency} nameHeader="Service" /><BreakdownCard title="Cost by Region" items={data.regionCosts} currency={data.currency} nameHeader="Region" /></div>
     <div className="grid gap-6 xl:grid-cols-2"><DriversCard data={data} /><AnomaliesCard data={data} /></div>
-    <div className="grid gap-6 xl:grid-cols-2"><BudgetCard data={data} /><Card><CardHeader><CardTitle>Potential Savings</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{data.potentialSavings.available && data.potentialSavings.monthlySavings != null ? `${format(data.potentialSavings.monthlySavings)} / month` : "No recommendations available"}</p></CardContent></Card></div>
+    <div className="grid gap-6 xl:grid-cols-2"><BudgetUsageCard budgets={budgets} month={month} /><Card><CardHeader><CardTitle>Potential Savings</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{data.potentialSavings.available && data.potentialSavings.monthlySavings != null ? `${format(data.potentialSavings.monthlySavings)} / month` : "No recommendations available"}</p></CardContent></Card></div>
   </>;
 }
 
 function TrendChart({ data, resolvedTheme }: { data: AwsCostAnalyticsResponse; resolvedTheme?: string }) {
   const colors = typeof document === "undefined" ? null : getChartTheme();
 
-  const [view, setView] = React.useState<"Service"|"Region"|"Account">("Service");
+  const [view, setView] = React.useState<BreakdownView>("Service");
 
   // aggregate daily data into month buckets (YYYY-MM)
   const monthMap = new Map<string, Map<string, number>>(); // month -> (service -> cost)
@@ -131,20 +144,23 @@ function TrendChart({ data, resolvedTheme }: { data: AwsCostAnalyticsResponse; r
 
   const series = view === 'Service' ? serviceSeries : view === 'Region' ? regionSeries : accountSeries;
 
-  const tooltipFormatter = (params: any) => {
-    const axisValue = params?.[0]?.axisValue ?? '';
-    const items = Array.isArray(params) ? [...params] : [params];
-    items.sort((a: any, b: any) => (Number(b.data) || 0) - (Number(a.data) || 0));
+  const tooltipFormatter = (params: unknown) => {
+    const items: TooltipEntry[] = (Array.isArray(params) ? params : [params])
+      .filter((item): item is TooltipEntry => typeof item === "object" && item !== null);
+    const axisValue = items[0]?.axisValue ?? '';
+    items.sort((a, b) => (Number(b.data) || 0) - (Number(a.data) || 0));
     let total = 0;
-    const rows = items.map((p: any) => {
+    const rows = items.map((p) => {
       const val = Number(p.data) || 0;
       total += val;
-      return `<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="margin-right:8px">${p.seriesName}</span><span>${formatCurrency(val, data.currency)}</span></div>`;
+      return `<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="margin-right:8px">${p.seriesName ?? ""}</span><span>${formatCurrency(val, data.currency)}</span></div>`;
     }).join('');
     return `<div style="max-height:320px;overflow:auto;padding:6px"><div style="font-weight:600;margin-bottom:6px">${axisValue}</div>${rows}<hr style="border:none;border-top:1px solid ${colors?.grid};margin:6px 0"/><div style="display:flex;justify-content:space-between;font-weight:600"><span>Total</span><span>${formatCurrency(total, data.currency)}</span></div></div>`;
   };
 
+  const palette = colors ? [colors.primary, colors.secondary, colors.positive, colors.neutral, colors.negative, colors.forecast, colors.budget] : undefined;
   const option = {
+    color: palette,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -164,10 +180,10 @@ function TrendChart({ data, resolvedTheme }: { data: AwsCostAnalyticsResponse; r
 
   return <Card>
     <CardHeader className="flex items-center justify-between">
-      <CardTitle>Cost Breakdown <span className="ml-2 text-sm text-muted-foreground">Info</span></CardTitle>
+      <CardTitle>Cost Breakdown <span className="ml-2 text-sm font-normal text-muted-foreground">{formatCurrency(monthTotalsArr.reduce((sum, value) => sum + value, 0), data.currency)} total</span></CardTitle>
       <div className="flex items-center gap-3">
         <div className="text-sm text-muted-foreground">Group costs by</div>
-        <select className="h-9 rounded border border-input bg-background px-2 text-sm" value={view} onChange={(e) => setView(e.target.value as any)}>
+        <select className="h-9 rounded border border-input bg-background px-2 text-sm" value={view} onChange={(e) => setView(e.target.value as BreakdownView)}>
           <option value="Service">Service</option>
           <option value="Region">Region</option>
           <option value="Account">Account</option>
@@ -180,8 +196,27 @@ function TrendChart({ data, resolvedTheme }: { data: AwsCostAnalyticsResponse; r
   </Card>;
 }
 
-function BreakdownCard({ title, items, currency }: { title: string; items: Array<{ name: string; cost: number }>; currency: string }) {
-  return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent className="space-y-3">{items.length === 0 ? <p className="text-sm text-muted-foreground">No cost data available.</p> : items.map(item => <div className="flex items-center justify-between gap-4 text-sm" key={item.name}><span className="truncate">{displayServiceLabel(item.name)}</span><span className="font-medium">{formatCurrency(item.cost, currency)}</span></div>)}</CardContent></Card>;
+const CHART_PALETTE = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
+
+function BreakdownCard({ title, items, currency, nameHeader }: { title: string; items: Array<{ name: string; cost: number }>; currency: string; nameHeader: string }) {
+  const total = items.reduce((sum, item) => sum + (Number.isFinite(item.cost) ? item.cost : 0), 0);
+  const rows = items.map((item) => ({ name: item.name, cost: item.cost, share: total > 0 ? (item.cost / total) * 100 : 0 }));
+  return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent><CostTable currency={currency} items={rows} nameHeader={nameHeader} /></CardContent></Card>;
+}
+
+function CostTable({ items, currency, nameHeader, showRank = false }: { items: Array<{ name: string; cost: number; share: number }>; currency: string; nameHeader: string; showRank?: boolean }) {
+  if (items.length === 0) return <p className="text-sm text-muted-foreground">No cost data available.</p>;
+  return <div className="overflow-x-auto"><table className="w-full border-collapse text-sm">
+    <thead><tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">{showRank && <th className="w-8 py-2 pr-2 font-medium">#</th>}<th className="py-2 pr-4 font-medium">{nameHeader}</th><th className="w-[38%] py-2 pr-4 font-medium">Share</th><th className="py-2 text-right font-medium">Cost</th></tr></thead>
+    <tbody className="divide-y divide-border">{items.map((item, index) => {
+      const color = CHART_PALETTE[index % CHART_PALETTE.length];
+      return <tr key={`${item.name}-${index}`}>{showRank && <td className="py-3 pr-2 text-xs font-medium text-muted-foreground">{index + 1}</td>}
+        <td className="max-w-[220px] py-3 pr-4"><span className="block truncate" title={item.name}>{displayServiceLabel(item.name)}</span></td>
+        <td className="py-3 pr-4"><div className="flex items-center gap-2"><div className="h-2 flex-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, item.share))}%`, backgroundColor: color }} /></div><span className="w-14 shrink-0 text-right text-xs font-medium tabular-nums" style={{ color }}>{item.share.toFixed(1)}%</span></div></td>
+        <td className="whitespace-nowrap py-3 text-right font-medium tabular-nums">{formatCurrency(item.cost, currency)}</td>
+      </tr>;
+    })}</tbody>
+  </table></div>;
 }
 
 function displayServiceLabel(name: string) {
@@ -196,19 +231,70 @@ function displayServiceLabel(name: string) {
 }
 
 function DriversCard({ data }: { data: AwsCostAnalyticsResponse }) {
-  return <Card><CardHeader><CardTitle>Top Cost Drivers</CardTitle></CardHeader><CardContent className="space-y-3">{data.topCostDrivers.length === 0 ? <p className="text-sm text-muted-foreground">No cost data available.</p> : data.topCostDrivers.map((item, index) => <div className="flex items-center justify-between gap-4 text-sm" key={item.service}><span className="truncate">{index + 1}. {item.service}</span><span className="whitespace-nowrap font-medium">{item.percentage}%</span></div>)}</CardContent></Card>;
+  const rows = data.topCostDrivers.map((item) => ({ name: item.service, cost: item.cost, share: item.percentage }));
+  return <Card><CardHeader><CardTitle>Top Cost Drivers</CardTitle></CardHeader><CardContent><CostTable currency={data.currency} items={rows} nameHeader="Service" showRank /></CardContent></Card>;
 }
 
 function AnomaliesCard({ data }: { data: AwsCostAnalyticsResponse }) {
-  return <Card><CardHeader><CardTitle>Cost Anomalies</CardTitle></CardHeader><CardContent>{data.anomalies.length === 0 ? <p className="text-sm text-muted-foreground">No significant cost anomalies detected.</p> : <div className="space-y-3">{data.anomalies.map(item => <div className="flex items-center gap-2 text-sm" key={item.date}><AlertTriangle className="size-4 text-warning" /><span>{item.date}: {item.percentageAboveAverage}% above recent average</span></div>)}</div>}</CardContent></Card>;
+  return <Card>
+    <CardHeader><CardTitle>Cost Anomalies {data.anomalies.length > 0 && <span className="ml-2 text-sm font-normal text-muted-foreground">{data.anomalies.length} detected</span>}</CardTitle></CardHeader>
+    <CardContent><div className="overflow-x-auto"><table className="w-full border-collapse text-sm">
+      <thead><tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wide text-muted-foreground"><th className="py-2 pr-4 font-medium">Date</th><th className="py-2 pr-4 font-medium">Cost</th><th className="py-2 pr-4 font-medium">Above average</th><th className="py-2 font-medium">Severity</th></tr></thead>
+      <tbody className="divide-y divide-border">
+        {data.anomalies.length === 0 ? <tr><td className="py-4 text-sm text-muted-foreground" colSpan={4}>No significant cost anomalies detected.</td></tr> : data.anomalies.map((item) => {
+          const severity = anomalySeverity(item.percentageAboveAverage);
+          return <tr key={item.date}>
+            <td className="whitespace-nowrap py-3 pr-4">{formatAnomalyDate(item.date)}</td>
+            <td className="whitespace-nowrap py-3 pr-4 font-medium">{formatCurrency(item.cost, data.currency)}</td>
+            <td className={`whitespace-nowrap py-3 pr-4 font-medium ${severityColor(severity)}`}>+{item.percentageAboveAverage}%</td>
+            <td className="py-3"><span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${severityBadge(severity)}`}><AlertTriangle className="size-3" />{severity}</span></td>
+          </tr>;
+        })}
+      </tbody>
+    </table></div></CardContent>
+  </Card>;
 }
 
-// function BudgetCard({ data }: { data: AwsCostAnalyticsResponse }) {
-//   const budget = data.budget;
-//   return <Card><CardHeader><CardTitle>Budget Usage</CardTitle></CardHeader><CardContent>{!budget.configured ? <p className="text-sm text-muted-foreground">No budget configured</p> : <div className="space-y-2"><p className="text-2xl font-semibold">{budget.usagePercentage}%</p><p className="text-sm text-muted-foreground">{formatCurrency(budget.actualSpend, budget.currency)} of {formatCurrency(budget.limit ?? 0, budget.currency)}</p></div>}</CardContent></Card>;
-// }
+type AnomalySeverity = "WARNING" | "CRITICAL";
+
+function anomalySeverity(percentageAboveAverage: number): AnomalySeverity {
+  return percentageAboveAverage >= 100 ? "CRITICAL" : "WARNING";
+}
+function severityColor(severity: AnomalySeverity) {
+  return severity === "CRITICAL" ? "text-destructive" : "text-warning";
+}
+function severityBadge(severity: AnomalySeverity) {
+  return severity === "CRITICAL" ? "bg-destructive/10 text-destructive" : "bg-warning/10 text-warning";
+}
+function formatAnomalyDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
 function LoadingState() { return <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{["Total", "This Month", "Daily Avg", "Forecast", "Savings"].map(label => <Card key={label}><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold">Loading...</p></CardContent></Card>)}</section>; }
-function BudgetCard({ data }: { data: AwsCostAnalyticsResponse }) { const budget = data.budget; return <Card><CardHeader><CardTitle>Budget Usage</CardTitle></CardHeader><CardContent>{!budget.configured ? <p className="text-sm text-muted-foreground">No budget configured</p> : <div className="space-y-2"><p className="text-2xl font-semibold">{budget.usagePercentage == null ? "Unavailable" : `${budget.usagePercentage}%`}</p><p className="text-sm text-muted-foreground">{budget.actualSpend == null ? "No CUR data available" : `${formatCurrency(budget.actualSpend, budget.currency)} of ${formatCurrency(budget.limit ?? 0, budget.currency)}`}</p></div>}</CardContent></Card>; }
+function BudgetUsageCard({ budgets, month }: { budgets: ReturnType<typeof useQuery<Budget[]>>; month: string }) {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const hasBudgets = Boolean(budgets.data?.length);
+  const summary = budgets.data ? summarizeBudgets(budgets.data) : null;
+  const value = budgets.isLoading ? "Loading..." : budgets.isError ? "Unavailable" : hasBudgets ? (summary?.usagePercentage == null ? "Unavailable" : `${summary.usagePercentage.toFixed(1)}%`) : "No budget configured";
+  const description = hasBudgets ? `Current monthly budget · ${BUDGET_TONE_LABEL[worstBudgetTone(budgets.data as Budget[])]}` : "Current monthly budget";
+  return <>
+    <Card
+      className={hasBudgets ? "cursor-pointer transition-colors hover:border-primary/40" : undefined}
+      role={hasBudgets ? "button" : undefined}
+      tabIndex={hasBudgets ? 0 : undefined}
+      onClick={hasBudgets ? () => setIsOpen(true) : undefined}
+      onKeyDown={hasBudgets ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setIsOpen(true); } } : undefined}
+    >
+      <CardHeader><CardTitle>Budget Usage</CardTitle></CardHeader>
+      <CardContent className="space-y-2">
+        <p className="text-2xl font-semibold">{value}</p>
+        <p className="text-sm text-muted-foreground">{description}</p>
+        {hasBudgets && <p className="text-xs font-medium text-primary">View budget overview</p>}
+      </CardContent>
+    </Card>
+    {isOpen && <BudgetUsageDialog budgets={budgets.data} month={month} isLoading={budgets.isLoading} isError={budgets.isError} onClose={() => setIsOpen(false)} />}
+  </>;
+}
 function ErrorState({ onRetry }: { onRetry: () => void }) { return <Card><CardContent className="flex min-h-[280px] flex-col items-center justify-center text-center"><p className="font-medium text-destructive">Unable to load AWS CUR billing data.</p><p className="mt-2 text-sm text-muted-foreground">Please retry after confirming the CUR import and PostgreSQL billing data are available.</p><Button className="mt-5" onClick={onRetry} variant="outline"><RefreshCw className="size-4" />Retry</Button></CardContent></Card>; }
 function formatCurrency(value: number, currency: string) { return new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 2 }).format(value); }

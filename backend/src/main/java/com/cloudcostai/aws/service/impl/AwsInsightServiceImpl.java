@@ -7,6 +7,7 @@ import com.cloudcostai.aws.service.AwsRecommendationService;
 import com.cloudcostai.aws.service.AwsResourceService;
 import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.model.AwsBilling;
+import com.cloudcostai.aws.model.ResourceIds;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsInsightService;
@@ -57,17 +58,47 @@ public class AwsInsightServiceImpl implements AwsInsightService {
         DateRange selected = dateRange(month);
         YearMonth selectedMonth = YearMonth.from(selected.start());
         String dataSource = billingSourceResolver == null ? "CUR_2_0" : billingSourceResolver.resolve(session.accountId(), selectedMonth).dataSource();
-        List<AwsBilling> rows = sourceRows(session.accountId(), selectedMonth, selected.start(), selected.end());
         LocalDate currentStart = selected.start();
         LocalDate currentEnd = selected.end();
         LocalDate previousStart = currentStart.minusMonths(1);
+        List<AwsBilling> rows = sourceRows(session.accountId(), selectedMonth, previousStart, currentEnd);
         List<AwsBilling> currentRows = rows.stream().filter(row -> inRange(row, currentStart, currentEnd)).toList();
         String currency = rows.stream().map(AwsBilling::getCurrency).filter(value -> value != null && !value.isBlank()).findFirst().orElse("USD");
         if (currentRows.isEmpty()) {
             return new AwsInsightResponse(session.accountId(), currency, LocalDateTime.now().toString(), List.of(),
                     List.of(), "NO_CUR_DATA", dataSource, currentStart.toString(), currentEnd.minusDays(1).toString(), null, null,
-                    "No CUR billing data is available for this period.");
+                    "No billing data is available for this period.");
         }
+        List<Insight> insights = billingInsights(rows, currentRows, currentStart, currentEnd, previousStart);
+        addResourceFindings(connectionToken, insights);
+        List<Recommendation> recommendations = recommendations(connectionToken, selected);
+        String lastUpdated = currentRows.stream().map(AwsBilling::getUpdatedAt).filter(value -> value != null).max(Comparator.naturalOrder()).map(Object::toString).orElse(null);
+        return new AwsInsightResponse(session.accountId(), currency, LocalDateTime.now().toString(), insights.stream().sorted(Comparator.comparingInt(this::severityRank).reversed()).toList(), recommendations,
+            "SUCCESS", dataSource, currentStart.toString(), currentEnd.minusDays(1).toString(), lastUpdated, currentTotal(currentRows, currentStart, currentEnd), null);
+    }
+
+    @Override
+    public BigDecimal estimatedSavings(String connectionToken, String month) {
+        var session = sessionService.getSession(connectionToken);
+        DateRange selected = dateRange(month);
+        LocalDate currentStart = selected.start();
+        LocalDate currentEnd = selected.end();
+        LocalDate previousStart = currentStart.minusMonths(1);
+        List<AwsBilling> rows = sourceRows(session.accountId(), YearMonth.from(selected.start()), previousStart, currentEnd);
+        List<AwsBilling> currentRows = rows.stream().filter(row -> inRange(row, currentStart, currentEnd)).toList();
+        if (currentRows.isEmpty()) return null;
+        return billingInsights(rows, currentRows, currentStart, currentEnd, previousStart).stream()
+                .filter(item -> "Top cost driver".equals(item.category()))
+                .map(Insight::estimatedImpact)
+                .filter(value -> value != null)
+                .reduce(ZERO, BigDecimal::add);
+    }
+
+    private BigDecimal currentTotal(List<AwsBilling> currentRows, LocalDate currentStart, LocalDate currentEnd) {
+        return totals(currentRows, currentStart, currentEnd, AwsBilling::getServiceName).values().stream().reduce(ZERO, BigDecimal::add);
+    }
+
+    private List<Insight> billingInsights(List<AwsBilling> rows, List<AwsBilling> currentRows, LocalDate currentStart, LocalDate currentEnd, LocalDate previousStart) {
         List<Insight> insights = new ArrayList<>();
 
         Map<String, BigDecimal> currentServices = totals(currentRows, currentStart, currentEnd, AwsBilling::getServiceName);
@@ -86,14 +117,14 @@ public class AwsInsightServiceImpl implements AwsInsightService {
 
         if (previousTotal.signum() > 0 && currentTotal.compareTo(previousTotal.multiply(BigDecimal.valueOf(1.25))) > 0) {
             insights.add(insight("account-increase", "High", "Sudden increase", "AWS account", "All regions", "Account total", currentTotal,
-                    "Cloud spend increased sharply.", "The last 30 days are more than 25% above the preceding 30 days.", currentTotal.subtract(previousTotal), "Compare daily CUR line items and investigate newly introduced services or resources.", "/billing"));
+                    "Cloud spend increased sharply.", "The last 30 days are more than 25% above the preceding 30 days.", currentTotal.subtract(previousTotal), "Compare daily stored billing rows and investigate newly introduced services or resources.", "/billing"));
         }
 
         currentServices.forEach((service, cost) -> {
             BigDecimal previous = previousServices.getOrDefault(service, ZERO);
             if (previous.signum() > 0 && cost.compareTo(previous.multiply(BigDecimal.valueOf(1.5))) > 0 && cost.subtract(previous).compareTo(BigDecimal.ONE) >= 0) {
                 insights.add(insight("spike-" + service, "High", "Cost spike", service, "All regions", "Service total", cost,
-                        "Service spend rose unexpectedly.", "Current spend is at least 50% above the previous 30-day period.", cost.subtract(previous), "Inspect the service's CUR usage type and resource-level charges.", "/billing"));
+                        "Service spend rose unexpectedly.", "Current spend is at least 50% above the previous 30-day period.", cost.subtract(previous), "Inspect the service's stored usage types and resource-level charges.", "/billing"));
             }
         });
 
@@ -101,17 +132,13 @@ public class AwsInsightServiceImpl implements AwsInsightService {
             .collect(java.util.stream.Collectors.groupingBy(this::resourceName, java.util.stream.Collectors.reducing(ZERO, this::cost, BigDecimal::add)))
                 .entrySet().stream().sorted(Map.Entry.<String, BigDecimal>comparingByValue().reversed()).limit(5)
                 .forEach(entry -> insights.add(insight("unused-" + entry.getKey(), "Medium", "Underutilized resource", serviceFor(rows, entry.getKey()), regionFor(rows, entry.getKey()), entry.getKey(), entry.getValue(),
-                        "A billable resource has no reported usage.", "CUR reports zero usage for this resource in the last 30 days while charges continue.", entry.getValue(), "Verify the resource is still required; stop, schedule, or remove it if it is not serving workloads.", "/resources")));
+                        "A billable resource has no reported usage.", "Stored billing reports zero usage for this resource while charges continue.", entry.getValue(), "Verify the resource is still required; stop, schedule, or remove it if it is not serving workloads.", "/resources")));
 
         if (insights.isEmpty() && !rows.isEmpty()) {
             insights.add(insight("steady-spend", "Low", "Spending pattern", "AWS account", "All regions", "Account total", currentTotal,
-                    "No material anomaly was detected.", "Current CUR spend is within the normal comparison range.", ZERO, "Continue monitoring service and resource-level spend.", "/billing"));
+                    "No material anomaly was detected.", "Current stored billing spend is within the normal comparison range.", ZERO, "Continue monitoring service and resource-level spend.", "/billing"));
         }
-        addResourceFindings(connectionToken, insights);
-        List<Recommendation> recommendations = recommendations(connectionToken, selected);
-        String lastUpdated = currentRows.stream().map(AwsBilling::getUpdatedAt).filter(value -> value != null).max(Comparator.naturalOrder()).map(Object::toString).orElse(null);
-        return new AwsInsightResponse(session.accountId(), currency, LocalDateTime.now().toString(), insights.stream().sorted(Comparator.comparingInt(this::severityRank).reversed()).toList(), recommendations,
-            "SUCCESS", "CUR_POSTGRESQL", currentStart.toString(), currentEnd.minusDays(1).toString(), lastUpdated, currentTotal, null);
+        return insights;
     }
 
     private Map<String, BigDecimal> totals(List<AwsBilling> rows, LocalDate start, LocalDate end, java.util.function.Function<AwsBilling, String> key) {
@@ -123,7 +150,7 @@ public class AwsInsightServiceImpl implements AwsInsightService {
         return new Insight(id, severity, category, service, blank(region, "Unknown"), resource, money(cost), problem, reason, money(impact), action, path);
     }
 
-    private String resourceName(AwsBilling row) { return blank(row.getResourceId(), blank(row.getProductName(), blank(row.getServiceName(), "Unknown"))); }
+    private String resourceName(AwsBilling row) { String resourceId = row.getResourceId(); return ResourceIds.isPresent(resourceId) ? resourceId : blank(row.getProductName(), blank(row.getServiceName(), "Unknown")); }
     private String serviceFor(List<AwsBilling> rows, String resource) { return rows.stream().filter(row -> resource.equals(resourceName(row))).map(row -> blank(row.getServiceName(), "Other AWS services")).findFirst().orElse("Other AWS services"); }
     private String regionFor(List<AwsBilling> rows, String resource) { return rows.stream().filter(row -> resource.equals(resourceName(row))).map(row -> blank(row.getRegion(), "Unknown")).findFirst().orElse("Unknown"); }
     private String blank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
@@ -175,7 +202,7 @@ public class AwsInsightServiceImpl implements AwsInsightService {
     }
 
     private List<AwsBilling> sourceRows(String accountId, YearMonth month, LocalDate start, LocalDate end) {
-        if (billingSourceResolver != null) return billingSourceResolver.rows(accountId, billingSourceResolver.resolve(accountId, month).dataSource(), start, end);
+        if (billingSourceResolver != null) return billingSourceResolver.resolve(accountId, start, end).rows();
         return billingRepository.findByAwsAccountId(accountId).stream().filter(row -> inRange(row, start, end)).toList();
     }
 

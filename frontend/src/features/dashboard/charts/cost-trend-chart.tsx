@@ -69,7 +69,7 @@ export default function CostTrendChart({ range, month, onRangeChange }: { range:
       <CardContent>
         {trend.isLoading && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading cost data...</p>}
         {trend.isError && !trend.data && <div className="flex h-[320px] flex-col items-center justify-center gap-3 text-sm text-destructive"><p>{trend.error instanceof Error ? trend.error.message : "Unable to load cost data."}</p><button type="button" className="rounded-lg border border-border px-3 py-1 text-foreground" onClick={() => trend.refetch()}>Try again</button></div>}
-        {trend.data?.dataStatus === "NO_BILLING_DATA" && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No CUR billing data available for the selected period.</p>}
+        {trend.data?.dataStatus === "NO_BILLING_DATA" && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No billing data is available for the selected period.</p>}
         {trend.isSuccess && costTrendData.length === 0 && <p className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No billing data available for the selected period.</p>}
         {trend.isSuccess && costTrendData.length > 0 && <ReactECharts
     key={resolvedTheme}

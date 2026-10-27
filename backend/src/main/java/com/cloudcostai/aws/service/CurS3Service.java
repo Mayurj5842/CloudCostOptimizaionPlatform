@@ -86,23 +86,38 @@ public class CurS3Service {
     }
 
     public Export readLatest(String accessKey, String secretKey) {
-        if (properties.getBucket().isBlank()) {
+        if (properties.getBucket() == null || properties.getBucket().isBlank()) {
             throw new IllegalStateException("AWS_BILLING_S3_BUCKET is not configured.");
+        }
+        if (properties.getPrefix() == null || properties.getPrefix().isBlank()) {
+            throw new IllegalStateException("AWS_BILLING_S3_PREFIX is not configured.");
         }
         logger.info("Searching S3 for CUR export bucket={} prefix={}", properties.getBucket(), properties.getPrefix());
         try (S3Client s3 = clientFactory.createS3Client(accessKey, secretKey, properties.getRegion())) {
             List<S3Object> objects = s3.listObjectsV2(ListObjectsV2Request.builder()
                             .bucket(properties.getBucket()).prefix(properties.getPrefix()).build())
-                    .contents().stream()
-                    .filter(object -> isCsv(object.key()))
+                .contents();
+            List<S3Object> manifests = objects.stream()
+                .filter(object -> isManifest(object.key()))
                     .sorted(Comparator.comparing(S3Object::lastModified).reversed())
                     .toList();
-            if (objects.isEmpty()) throw new IllegalStateException("No CUR CSV files are available under the configured S3 prefix.");
-            S3Object object = objects.get(0);
+            if (!manifests.isEmpty()) {
+            S3Object manifest = manifests.get(0);
+            Set<String> dataKeys = parseManifestKeys(getObjectBytes(s3, manifest.key()), new ObjectMapper(),
+                properties.getBucket(), properties.getPrefix());
+            List<Row> rows = new ArrayList<>();
+            for (String dataKey : dataKeys) rows.addAll(parse(getObjectBytes(s3, dataKey), dataKey));
+            logger.info("CUR manifest selected: {} dataFiles={} rows={}", manifest.key(), dataKeys.size(), rows.size());
+            return new Export(manifest.key(), manifest.lastModified(), List.copyOf(rows));
+            }
+            List<S3Object> csvFiles = objects.stream()
+                .filter(object -> isCsv(object.key()))
+                .sorted(Comparator.comparing(S3Object::lastModified).reversed())
+                .toList();
+            if (csvFiles.isEmpty()) throw new IllegalStateException("No CUR CSV files are available under the configured S3 prefix.");
+            S3Object object = csvFiles.get(0);
             logger.info("CUR file found: {}", object.key());
-            var bytes = s3.getObject(GetObjectRequest.builder().bucket(properties.getBucket()).key(object.key()).build(),
-                    ResponseTransformer.toBytes());
-            return new Export(object.key(), object.lastModified(), parse(bytes.asByteArray(), object.key()));
+            return new Export(object.key(), object.lastModified(), parse(getObjectBytes(s3, object.key()), object.key()));
         } catch (RuntimeException exception) {
             logger.error("CUR import failed while reading S3: {}", exception.getMessage());
             throw exception;
@@ -117,6 +132,7 @@ public class CurS3Service {
              CSVParser parser = CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true).setIgnoreEmptyLines(true).build().parse(reader)) {
             Map<String, Integer> headers = parser.getHeaderMap().keySet().stream()
                     .collect(java.util.stream.Collectors.toMap(this::normalize, parser.getHeaderMap()::get, (left, right) -> left));
+                logger.info("CUR file resource-id column present={}", headers.containsKey("line_item_resource_id"));
             require(headers, "line_item_usage_start_date", "line_item_usage_start_date");
             require(headers, "line_item_unblended_cost", "line_item_unblended_cost");
             List<Row> rows = new ArrayList<>();
@@ -137,7 +153,16 @@ public class CurS3Service {
     }
 
     private String normalize(String value) { return value.trim().toLowerCase(Locale.ROOT).replace('.', '_'); }
+    private boolean isManifest(String key) {
+        String value = key.toLowerCase(Locale.ROOT);
+        return value.contains("manifest") && value.endsWith(".json");
+    }
     private boolean isCsv(String key) { String value = key.toLowerCase(Locale.ROOT); return value.endsWith(".csv") || value.endsWith(".csv.gz") || value.endsWith(".gz"); }
+    private byte[] getObjectBytes(S3Client s3, String key) {
+        ResponseBytes<?> bytes = s3.getObject(GetObjectRequest.builder().bucket(properties.getBucket()).key(key).build(),
+                ResponseTransformer.toBytes());
+        return bytes.asByteArray();
+    }
 
     public record Export(String key, Instant lastModified, List<Row> rows) {}
     public record Row(long number, Map<String, String> values) {}

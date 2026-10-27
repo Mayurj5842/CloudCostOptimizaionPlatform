@@ -79,6 +79,65 @@ class AwsLiveCostServiceImplTest {
                                                 tuple(accountId, java.time.LocalDate.of(2026, 8, 1), new java.math.BigDecimal("2.50"), "COST_EXPLORER"));
         }
 
+        @Test
+        void persistsGroupedCostsEvenWhenCostExplorerOmitsDailyTotal() {
+                when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+                                                "access", "secret", "us-east-1", "123456789012", Instant.now().plusSeconds(300)));
+                when(clientFactory.createCostExplorerClient("access", "secret")).thenReturn(costExplorerClient);
+                when(costExplorerClient.getCostAndUsage(any(GetCostAndUsageRequest.class))).thenReturn(responseWithoutTotal());
+                when(billingRepository.findByRecordKey(any())).thenReturn(Optional.empty());
+
+                var result = new AwsLiveCostServiceImpl(clientFactory, sessionService, billingRepository)
+                                                .fetch("token", "2026-08");
+
+                assertThat(result.status()).isEqualTo("SUCCESS");
+                assertThat(result.cost()).isEqualByComparingTo("15.00");
+                verify(billingRepository, times(2)).save(any(AwsBilling.class));
+        }
+
+        @Test
+        void usesBoundedStableRecordKeysForLongServiceNames() {
+                String longServiceName = "Amazon " + "Example Service ".repeat(12);
+                when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+                                                "access", "secret", "us-east-1", "123456789012", Instant.now().plusSeconds(300)));
+                when(clientFactory.createCostExplorerClient("access", "secret")).thenReturn(costExplorerClient);
+                when(costExplorerClient.getCostAndUsage(any(GetCostAndUsageRequest.class)))
+                                                .thenReturn(responseForService(longServiceName));
+                when(billingRepository.findByRecordKey(any())).thenReturn(Optional.empty());
+
+                new AwsLiveCostServiceImpl(clientFactory, sessionService, billingRepository).fetch("token", "2026-08");
+
+                var savedRow = org.mockito.ArgumentCaptor.forClass(AwsBilling.class);
+                verify(billingRepository).save(savedRow.capture());
+                assertThat(savedRow.getValue().getRecordKey()).hasSizeLessThanOrEqualTo(128);
+                assertThat(savedRow.getValue().getServiceName()).isEqualTo(longServiceName);
+                assertThat(savedRow.getValue().getDataSource()).isEqualTo("COST_EXPLORER");
+        }
+
+                    @Test
+                    void repeatedFetchUpdatesExistingRecordKeysInsteadOfInsertingDuplicates() {
+                        String accountId = "123456789012";
+                        var date = java.time.LocalDate.of(2026, 8, 1);
+                        AwsBilling existingEc2 = billingRow(accountId, date, "Amazon EC2", "us-east-1", "1.00");
+                        AwsBilling existingS3 = billingRow(accountId, date, "Amazon S3", "us-east-1", "1.00");
+                        when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+                                "access", "secret", "us-east-1", accountId, Instant.now().plusSeconds(300)));
+                        when(clientFactory.createCostExplorerClient("access", "secret")).thenReturn(costExplorerClient);
+                        when(costExplorerClient.getCostAndUsage(any(GetCostAndUsageRequest.class))).thenReturn(response());
+                        when(billingRepository.findByRecordKey("COST_EXPLORER|" + accountId + "|2026-08-01|us-east-1|Amazon EC2"))
+                                .thenReturn(Optional.of(existingEc2));
+                        when(billingRepository.findByRecordKey("COST_EXPLORER|" + accountId + "|2026-08-01|us-east-1|Amazon S3"))
+                                .thenReturn(Optional.of(existingS3));
+
+                        new AwsLiveCostServiceImpl(clientFactory, sessionService, billingRepository).fetch("token", "2026-08");
+
+                        assertThat(existingEc2.getCostAmount()).isEqualByComparingTo("12.50");
+                        assertThat(existingS3.getCostAmount()).isEqualByComparingTo("2.50");
+                        verify(billingRepository).save(existingEc2);
+                        verify(billingRepository).save(existingS3);
+                        verify(billingRepository, times(2)).save(any(AwsBilling.class));
+                    }
+
     private GetCostAndUsageResponse response() {
         return GetCostAndUsageResponse.builder()
                 .resultsByTime(ResultByTime.builder()
@@ -91,10 +150,36 @@ class AwsLiveCostServiceImplTest {
                 .build();
     }
 
+    private GetCostAndUsageResponse responseWithoutTotal() {
+        return GetCostAndUsageResponse.builder()
+                .resultsByTime(ResultByTime.builder()
+                        .timePeriod(DateInterval.builder().start("2026-08-01").end("2026-08-02").build())
+                        .groups(List.of(
+                                group("us-east-1", "Amazon EC2", "12.50"),
+                                group("us-east-1", "Amazon S3", "2.50")))
+                        .build())
+                .build();
+    }
+
+    private GetCostAndUsageResponse responseForService(String service) {
+        return GetCostAndUsageResponse.builder()
+                .resultsByTime(ResultByTime.builder()
+                        .timePeriod(DateInterval.builder().start("2026-08-01").end("2026-08-02").build())
+                        .groups(List.of(group("us-east-1", service, "4.25")))
+                        .build())
+                .build();
+    }
+
     private Group group(String region, String service, String amount) {
         return Group.builder()
                 .keys(region, service)
                 .metrics(Map.of("UnblendedCost", MetricValue.builder().amount(amount).unit("USD").build()))
                 .build();
     }
+
+        private AwsBilling billingRow(String accountId, java.time.LocalDate date, String service, String region, String amount) {
+                return new AwsBilling(accountId, date, date, service, region, java.math.BigDecimal.ONE, new java.math.BigDecimal(amount),
+                                "USD", false, service, "UnblendedCost", null, "COST_EXPLORER", date, date,
+                                "COST_EXPLORER|" + accountId + "|" + date + "|" + region + "|" + service, "COST_EXPLORER");
+        }
 }
