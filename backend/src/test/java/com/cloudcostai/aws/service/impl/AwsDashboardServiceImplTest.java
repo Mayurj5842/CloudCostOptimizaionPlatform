@@ -9,6 +9,7 @@ import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.repository.AwsRecommendationRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsBillingSourceResolver;
+import com.cloudcostai.aws.service.AwsInsightService;
 import com.cloudcostai.aws.service.AwsResourceService;
 import com.cloudcostai.billing.repository.BudgetRepository;
 import org.junit.jupiter.api.Test;
@@ -50,6 +51,9 @@ class AwsDashboardServiceImplTest {
     @Mock
     private BudgetRepository budgetRepository;
 
+    @Mock
+    private AwsInsightService insightService;
+
         @Test
         void dashboardAndChartsUseFetchedLiveCostsAndKeepCurTrendHistory() {
         String accountId = "123456789012";
@@ -83,7 +87,55 @@ class AwsDashboardServiceImplTest {
         assertThat(distribution.services()).extracting("service").containsExactly("Live EC2", "CUR S3");
         }
 
-        private AwsBilling sourcedRow(String accountId, LocalDate date, String cost, String service, String source) {
+    @Test
+    void dashboardEstimatedSavingsUsesInsightImpact() {
+        String accountId = "123456789012";
+        when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+            "access", "secret", "us-east-1", accountId, Instant.now().plusSeconds(600)));
+        AwsBilling septemberCur = sourcedRow(accountId, LocalDate.of(2026, 9, 10), "20.00", "CUR EC2", "CUR_2_0");
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "CUR_2_0"))
+            .thenReturn(List.of(septemberCur));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "COST_EXPLORER"))
+            .thenReturn(List.of());
+        when(resourceService.discoverResources("token")).thenReturn(new AwsResourceResponse(accountId, "us-east-1",
+            new AwsResourceResponse.AwsResourceSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()));
+        when(insightService.estimatedSavings("token", "2026-09")).thenReturn(new BigDecimal("0.70"));
+
+        AwsDashboardServiceImpl service = new AwsDashboardServiceImpl(sessionService, resourceService, billingRepository,
+            recommendationRepository, budgetRepository, new AwsBillingSourceResolver(billingRepository), insightService);
+
+        AwsDashboardResponse dashboard = service.getDashboard("token", "2026-09");
+
+        assertThat(dashboard.estimatedSavings()).isNotNull();
+        assertThat(dashboard.estimatedSavings().value()).isEqualByComparingTo("0.70");
+    }
+
+    @Test
+    void dashboardEstimatedSavingsIsNullWithoutInsightOrStoredEstimate() {
+        String accountId = "123456789012";
+        when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
+            "access", "secret", "us-east-1", accountId, Instant.now().plusSeconds(600)));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "CUR_2_0"))
+            .thenReturn(List.of(sourcedRow(accountId, LocalDate.of(2026, 9, 10), "20.00", "CUR EC2", "CUR_2_0")));
+        when(billingRepository.findByAwsAccountIdAndDataSourceOrderByBillingPeriodStartAsc(accountId, "COST_EXPLORER"))
+            .thenReturn(List.of());
+        when(resourceService.discoverResources("token")).thenReturn(new AwsResourceResponse(accountId, "us-east-1",
+            new AwsResourceResponse.AwsResourceSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()));
+        when(insightService.estimatedSavings("token", "2026-09")).thenReturn(null);
+        when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(accountId, "2026-09"))
+            .thenReturn(List.of());
+
+        AwsDashboardServiceImpl service = new AwsDashboardServiceImpl(sessionService, resourceService, billingRepository,
+            recommendationRepository, budgetRepository, new AwsBillingSourceResolver(billingRepository), insightService);
+
+        AwsDashboardResponse dashboard = service.getDashboard("token", "2026-09");
+
+        assertThat(dashboard.estimatedSavings()).isNull();
+    }
+
+    private AwsBilling sourcedRow(String accountId, LocalDate date, String cost, String service, String source) {
         return new AwsBilling(accountId, date, date, service, "us-east-1", BigDecimal.ONE, new BigDecimal(cost),
             "USD", false, service, "Usage", null, "Usage", date, date, source + date + service, source);
         }
@@ -467,5 +519,142 @@ class AwsDashboardServiceImplTest {
         assertThat(response.totalCloudSpend().changePercentage()).isNull();
         assertThat(response.totalCloudSpend().changeDirection()).isEqualTo("NO_COMPARABLE_PREVIOUS_MONTH_SPEND");
         assertThat(response.totalCloudSpend().dataStatus()).isEqualTo("AVAILABLE");
+    }
+
+    @Test
+    void forecastProjectsTheCurrentMonthFromTheObservedDailyRunRate() {
+        String accountId = "123456789012";
+        LocalDate today = LocalDate.now();
+        YearMonth current = YearMonth.from(today);
+        int observedDays = Math.min(10, today.getDayOfMonth());
+
+        when(sessionService.getSession("token")).thenReturn(
+            new AwsConnectionSessionService.ConnectionSession(
+                "access-key", "secret-key", "us-east-1", accountId, Instant.now().plusSeconds(600)));
+        when(billingRepository.findByAwsAccountId(accountId)).thenReturn(dailyRows(accountId, current, observedDays));
+        when(resourceService.discoverResources("token")).thenReturn(emptyResources(accountId));
+        when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(accountId, current.toString()))
+            .thenReturn(List.of());
+
+        AwsDashboardServiceImpl service = new AwsDashboardServiceImpl(
+            sessionService, resourceService, billingRepository, recommendationRepository, budgetRepository);
+        AwsDashboardResponse response = service.getDashboard("token", current.toString());
+
+        AwsDashboardResponse.Forecast forecast = response.forecast();
+        assertThat(forecast).isNotNull();
+        assertThat(forecast.method()).isEqualTo("RUN_RATE_PROJECTION");
+        assertThat(forecast.dataStatus()).isEqualTo("AVAILABLE");
+        assertThat(forecast.daysObserved()).isEqualTo(observedDays);
+        assertThat(forecast.daysInMonth()).isEqualTo(current.lengthOfMonth());
+        assertThat(forecast.remainingDays()).isEqualTo(current.lengthOfMonth() - observedDays);
+        assertThat(forecast.actualToDate()).isEqualByComparingTo(new BigDecimal(observedDays).setScale(2));
+        assertThat(forecast.dailyRunRate()).isEqualByComparingTo("1.000000");
+        assertThat(forecast.projectedRemaining()).isEqualByComparingTo(new BigDecimal(current.lengthOfMonth() - observedDays).setScale(2));
+        assertThat(forecast.value()).isEqualByComparingTo(new BigDecimal(current.lengthOfMonth()).setScale(2));
+        assertThat(forecast.previousMonth()).isNull();
+        assertThat(forecast.percentageChange()).isNull();
+    }
+
+    @Test
+    void forecastOfACompletedMonthEqualsTheFinalActual() {
+        String accountId = "123456789012";
+        YearMonth completed = YearMonth.now().minusMonths(1);
+        int days = completed.lengthOfMonth();
+
+        when(sessionService.getSession("token")).thenReturn(
+            new AwsConnectionSessionService.ConnectionSession(
+                "access-key", "secret-key", "us-east-1", accountId, Instant.now().plusSeconds(600)));
+        when(billingRepository.findByAwsAccountId(accountId))
+            .thenReturn(List.of(monthBucketRow(accountId, completed, new BigDecimal(days).multiply(new BigDecimal("2.00")))));
+        when(resourceService.discoverResources("token")).thenReturn(emptyResources(accountId));
+        when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(accountId, completed.toString()))
+            .thenReturn(List.of());
+
+        AwsDashboardServiceImpl service = new AwsDashboardServiceImpl(
+            sessionService, resourceService, billingRepository, recommendationRepository, budgetRepository);
+        AwsDashboardResponse response = service.getDashboard("token", completed.toString());
+
+        AwsDashboardResponse.Forecast forecast = response.forecast();
+        assertThat(forecast).isNotNull();
+        assertThat(forecast.method()).isEqualTo("FINAL_ACTUAL");
+        assertThat(forecast.remainingDays()).isZero();
+        assertThat(forecast.projectedRemaining()).isEqualByComparingTo(BigDecimal.ZERO.setScale(2));
+        assertThat(forecast.value()).isEqualByComparingTo(new BigDecimal(days).multiply(new BigDecimal("2.00")).setScale(2));
+        assertThat(forecast.dailyRunRate()).isEqualByComparingTo("2.000000");
+    }
+
+    @Test
+    void forecastFallsBackToThePriorMonthRunRateWhenTheCurrentMonthHasNoRows() {
+        String accountId = "123456789012";
+        YearMonth current = YearMonth.now();
+        YearMonth previous = current.minusMonths(1);
+        int previousDays = previous.lengthOfMonth();
+
+        when(sessionService.getSession("token")).thenReturn(
+            new AwsConnectionSessionService.ConnectionSession(
+                "access-key", "secret-key", "us-east-1", accountId, Instant.now().plusSeconds(600)));
+        when(billingRepository.findByAwsAccountId(accountId))
+            .thenReturn(List.of(monthBucketRow(accountId, previous, new BigDecimal(previousDays).setScale(2))));
+        when(resourceService.discoverResources("token")).thenReturn(emptyResources(accountId));
+        when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(accountId, current.toString()))
+            .thenReturn(List.of());
+
+        AwsDashboardServiceImpl service = new AwsDashboardServiceImpl(
+            sessionService, resourceService, billingRepository, recommendationRepository, budgetRepository);
+        AwsDashboardResponse response = service.getDashboard("token", current.toString());
+
+        AwsDashboardResponse.Forecast forecast = response.forecast();
+        assertThat(forecast).isNotNull();
+        assertThat(forecast.method()).isEqualTo("PRIOR_MONTH_RUN_RATE");
+        assertThat(forecast.daysObserved()).isZero();
+        assertThat(forecast.dailyRunRate()).isEqualByComparingTo("1.000000");
+        assertThat(forecast.value()).isEqualByComparingTo(new BigDecimal(current.lengthOfMonth()).setScale(2));
+    }
+
+    @Test
+    void forecastIsUnavailableWhenTheSelectedMonthHasNoBillingData() {
+        String accountId = "123456789012";
+        YearMonth future = YearMonth.now().plusMonths(3);
+
+        when(sessionService.getSession("token")).thenReturn(
+            new AwsConnectionSessionService.ConnectionSession(
+                "access-key", "secret-key", "us-east-1", accountId, Instant.now().plusSeconds(600)));
+        when(billingRepository.findByAwsAccountId(accountId)).thenReturn(List.of());
+        when(resourceService.discoverResources("token")).thenReturn(emptyResources(accountId));
+        when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(accountId, future.toString()))
+            .thenReturn(List.of());
+
+        AwsDashboardServiceImpl service = new AwsDashboardServiceImpl(
+            sessionService, resourceService, billingRepository, recommendationRepository, budgetRepository);
+        AwsDashboardResponse response = service.getDashboard("token", future.toString());
+
+        AwsDashboardResponse.Forecast forecast = response.forecast();
+        assertThat(forecast).isNotNull();
+        assertThat(forecast.value()).isNull();
+        assertThat(forecast.method()).isEqualTo("NO_BILLING_DATA");
+        assertThat(forecast.dataStatus()).isEqualTo("NO_BILLING_DATA");
+    }
+
+    private AwsResourceResponse emptyResources(String accountId) {
+        return new AwsResourceResponse(accountId, "us-east-1",
+            new AwsResourceResponse.AwsResourceSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+    }
+
+    private List<AwsBilling> dailyRows(String accountId, YearMonth month, int days) {
+        List<AwsBilling> rows = new java.util.ArrayList<>();
+        for (int day = 1; day <= days; day++) {
+            LocalDate date = month.atDay(day);
+            rows.add(new AwsBilling(accountId, date, date, "EC2", "us-east-1", BigDecimal.ONE, BigDecimal.ONE,
+                "USD", false, "EC2", "BoxUsage", "i-" + day, "Usage", date, date, "forecast-" + month + "-" + day));
+        }
+        return rows;
+    }
+
+    private AwsBilling monthBucketRow(String accountId, YearMonth month, BigDecimal cost) {
+        LocalDate start = month.atDay(1);
+        LocalDate end = month.atEndOfMonth();
+        return new AwsBilling(accountId, start, end, "EC2", "us-east-1", BigDecimal.ONE, cost,
+            "USD", false, "EC2", "BoxUsage", "i-bucket", "Usage", start, end, "forecast-bucket-" + month);
     }
 }

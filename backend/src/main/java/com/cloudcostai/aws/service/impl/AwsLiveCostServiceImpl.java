@@ -130,7 +130,7 @@ public class AwsLiveCostServiceImpl implements AwsLiveCostService {
             } else {
                 billingRepository.save(new com.cloudcostai.aws.model.AwsBilling(accountId, stored.date(), stored.date(),
                         stored.service(), stored.region(), stored.cost(), stored.cost(), stored.currency(), false,
-                        stored.service(), "UnblendedCost", null, "COST_EXPLORER", stored.date(), stored.date(),
+                        stored.service(), "UnblendedCost", com.cloudcostai.aws.model.ResourceIds.NONE, "COST_EXPLORER", stored.date(), stored.date(),
                         recordKey, "COST_EXPLORER"));
             }
         }

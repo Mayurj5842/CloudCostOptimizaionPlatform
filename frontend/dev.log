@@ -1,0 +1,30 @@
+
+> frontend@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.12 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.31.182:3000
+✓ Ready in 1126ms
+
+○ Compiling /dashboard ...
+ GET /dashboard 200 in 29.6s (next.js: 27.9s, application-code: 1749ms)
+ GET /dashboard 200 in 819ms (next.js: 192ms, application-code: 627ms)
+ GET / 200 in 2.6s (next.js: 2.4s, application-code: 209ms)
+ GET /login 200 in 1147ms (next.js: 1002ms, application-code: 144ms)
+ GET /dashboard 200 in 117ms (next.js: 6ms, application-code: 111ms)
+ GET /reports 200 in 1391ms (next.js: 1279ms, application-code: 111ms)
+ GET /resources 200 in 947ms (next.js: 878ms, application-code: 69ms)
+ GET /integrations 200 in 893ms (next.js: 787ms, application-code: 106ms)
+ GET /recommendations 200 in 877ms (next.js: 785ms, application-code: 91ms)
+ GET /billing 200 in 2.9s (next.js: 2.8s, application-code: 99ms)
+ GET /budgets 200 in 959ms (next.js: 856ms, application-code: 103ms)
+ GET /insights 200 in 1077ms (next.js: 974ms, application-code: 103ms)
+ GET /health-center 200 in 1321ms (next.js: 1000ms, application-code: 321ms)
+ GET /settings 200 in 1051ms (next.js: 958ms, application-code: 93ms)
+ GET /profile 200 in 839ms (next.js: 762ms, application-code: 77ms)
+✓ Finished writing to filesystem cache in 10.1s
+✓ Compiled in 886ms
+ GET /dashboard 200 in 506ms (next.js: 353ms, application-code: 152ms)
+ GET /billing 200 in 568ms (next.js: 222ms, application-code: 346ms)
+ GET /dashboard 200 in 150ms (next.js: 34ms, application-code: 116ms)

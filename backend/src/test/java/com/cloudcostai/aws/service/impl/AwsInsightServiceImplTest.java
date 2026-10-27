@@ -107,6 +107,22 @@ class AwsInsightServiceImplTest {
         assertThat(response.insights()).isNotEmpty();
         }
 
+    @Test
+    void estimatedSavingsSumsTopCostDriverImpacts() {
+        AwsInsightServiceImpl service = service(List.of(
+                billingRow("Amazon S3", "2026-08-10", "120.00", "august-s3"),
+                billingRow("Amazon EC2", "2026-08-11", "80.00", "august-ec2")));
+
+        assertThat(service.estimatedSavings("token", "2026-08")).isEqualByComparingTo("20.00");
+    }
+
+    @Test
+    void estimatedSavingsIsNullWhenNoBillingData() {
+        AwsInsightServiceImpl service = service(List.of());
+
+        assertThat(service.estimatedSavings("token", "2026-08")).isNull();
+    }
+
     private AwsInsightServiceImpl service(List<AwsBilling> rows) {
         String accountId = "123456789012";
         when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(

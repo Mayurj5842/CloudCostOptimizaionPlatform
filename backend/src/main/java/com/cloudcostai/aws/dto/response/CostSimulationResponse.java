@@ -8,14 +8,17 @@ public record CostSimulationResponse(
         String billingMonth,
         String currency,
         String dataSource,
+        String mode,
         String status,
         String message,
         BigDecimal currentMonthlyCost,
         BigDecimal estimatedMonthlyCost,
         BigDecimal estimatedMonthlySaving,
         BigDecimal estimatedAnnualSaving,
+        BigDecimal whatIfReductionPercent,
         List<Scenario> scenarios
 ) {
     public record Scenario(String recommendationId, String title, String service, String resourceId,
-                           String region, String status, BigDecimal estimatedMonthlySaving, String message) {}
+                           String region, String status, String estimateBasis,
+                           BigDecimal estimatedMonthlySaving, String message) {}
 }

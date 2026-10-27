@@ -33,7 +33,7 @@ public class AwsRecommendation {
     @Column(nullable = false)
     private String service;
 
-    @Column(name = "resource_id")
+    @Column(name = "resource_id", nullable = false)
     private String resourceId;
 
     @Column
@@ -100,7 +100,7 @@ public class AwsRecommendation {
         this.category = category;
         this.severity = severity;
         this.service = service;
-        this.resourceId = resourceId;
+        this.resourceId = ResourceIds.store(resourceId);
         this.region = region;
         this.currentCost = currentCost;
         this.reason = reason;

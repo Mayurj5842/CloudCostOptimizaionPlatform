@@ -7,6 +7,7 @@ import com.cloudcostai.aws.service.AwsRecommendationService;
 import com.cloudcostai.aws.service.AwsResourceService;
 import com.cloudcostai.aws.service.AwsBillingSourceResolver;
 import com.cloudcostai.aws.model.AwsBilling;
+import com.cloudcostai.aws.model.ResourceIds;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
 import com.cloudcostai.aws.service.AwsInsightService;
@@ -68,6 +69,36 @@ public class AwsInsightServiceImpl implements AwsInsightService {
                     List.of(), "NO_CUR_DATA", dataSource, currentStart.toString(), currentEnd.minusDays(1).toString(), null, null,
                     "No billing data is available for this period.");
         }
+        List<Insight> insights = billingInsights(rows, currentRows, currentStart, currentEnd, previousStart);
+        addResourceFindings(connectionToken, insights);
+        List<Recommendation> recommendations = recommendations(connectionToken, selected);
+        String lastUpdated = currentRows.stream().map(AwsBilling::getUpdatedAt).filter(value -> value != null).max(Comparator.naturalOrder()).map(Object::toString).orElse(null);
+        return new AwsInsightResponse(session.accountId(), currency, LocalDateTime.now().toString(), insights.stream().sorted(Comparator.comparingInt(this::severityRank).reversed()).toList(), recommendations,
+            "SUCCESS", dataSource, currentStart.toString(), currentEnd.minusDays(1).toString(), lastUpdated, currentTotal(currentRows, currentStart, currentEnd), null);
+    }
+
+    @Override
+    public BigDecimal estimatedSavings(String connectionToken, String month) {
+        var session = sessionService.getSession(connectionToken);
+        DateRange selected = dateRange(month);
+        LocalDate currentStart = selected.start();
+        LocalDate currentEnd = selected.end();
+        LocalDate previousStart = currentStart.minusMonths(1);
+        List<AwsBilling> rows = sourceRows(session.accountId(), YearMonth.from(selected.start()), previousStart, currentEnd);
+        List<AwsBilling> currentRows = rows.stream().filter(row -> inRange(row, currentStart, currentEnd)).toList();
+        if (currentRows.isEmpty()) return null;
+        return billingInsights(rows, currentRows, currentStart, currentEnd, previousStart).stream()
+                .filter(item -> "Top cost driver".equals(item.category()))
+                .map(Insight::estimatedImpact)
+                .filter(value -> value != null)
+                .reduce(ZERO, BigDecimal::add);
+    }
+
+    private BigDecimal currentTotal(List<AwsBilling> currentRows, LocalDate currentStart, LocalDate currentEnd) {
+        return totals(currentRows, currentStart, currentEnd, AwsBilling::getServiceName).values().stream().reduce(ZERO, BigDecimal::add);
+    }
+
+    private List<Insight> billingInsights(List<AwsBilling> rows, List<AwsBilling> currentRows, LocalDate currentStart, LocalDate currentEnd, LocalDate previousStart) {
         List<Insight> insights = new ArrayList<>();
 
         Map<String, BigDecimal> currentServices = totals(currentRows, currentStart, currentEnd, AwsBilling::getServiceName);
@@ -107,11 +138,7 @@ public class AwsInsightServiceImpl implements AwsInsightService {
             insights.add(insight("steady-spend", "Low", "Spending pattern", "AWS account", "All regions", "Account total", currentTotal,
                     "No material anomaly was detected.", "Current stored billing spend is within the normal comparison range.", ZERO, "Continue monitoring service and resource-level spend.", "/billing"));
         }
-        addResourceFindings(connectionToken, insights);
-        List<Recommendation> recommendations = recommendations(connectionToken, selected);
-        String lastUpdated = currentRows.stream().map(AwsBilling::getUpdatedAt).filter(value -> value != null).max(Comparator.naturalOrder()).map(Object::toString).orElse(null);
-        return new AwsInsightResponse(session.accountId(), currency, LocalDateTime.now().toString(), insights.stream().sorted(Comparator.comparingInt(this::severityRank).reversed()).toList(), recommendations,
-            "SUCCESS", dataSource, currentStart.toString(), currentEnd.minusDays(1).toString(), lastUpdated, currentTotal, null);
+        return insights;
     }
 
     private Map<String, BigDecimal> totals(List<AwsBilling> rows, LocalDate start, LocalDate end, java.util.function.Function<AwsBilling, String> key) {
@@ -123,7 +150,7 @@ public class AwsInsightServiceImpl implements AwsInsightService {
         return new Insight(id, severity, category, service, blank(region, "Unknown"), resource, money(cost), problem, reason, money(impact), action, path);
     }
 
-    private String resourceName(AwsBilling row) { return blank(row.getResourceId(), blank(row.getProductName(), blank(row.getServiceName(), "Unknown"))); }
+    private String resourceName(AwsBilling row) { String resourceId = row.getResourceId(); return ResourceIds.isPresent(resourceId) ? resourceId : blank(row.getProductName(), blank(row.getServiceName(), "Unknown")); }
     private String serviceFor(List<AwsBilling> rows, String resource) { return rows.stream().filter(row -> resource.equals(resourceName(row))).map(row -> blank(row.getServiceName(), "Other AWS services")).findFirst().orElse("Other AWS services"); }
     private String regionFor(List<AwsBilling> rows, String resource) { return rows.stream().filter(row -> resource.equals(resourceName(row))).map(row -> blank(row.getRegion(), "Unknown")).findFirst().orElse("Unknown"); }
     private String blank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }

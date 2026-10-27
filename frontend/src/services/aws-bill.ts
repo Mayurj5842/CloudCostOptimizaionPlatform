@@ -39,7 +39,11 @@ export async function syncAwsBilling(connectionToken: string): Promise<AwsBillSu
         throw new Error("AWS connection expired. Please reconnect your AWS account.");
       }
       const message = error.response?.data?.message;
-      throw new Error(typeof message === "string" && message.trim() ? message : error.message);
+      const text = typeof message === "string" && message.trim() ? message : error.message;
+      if (/S3_BUCKET is not configured|S3_PREFIX is not configured/i.test(text)) {
+        throw new Error("CUR 2.0 S3 billing export is not configured for this deployment. Set AWS_BILLING_S3_BUCKET and AWS_BILLING_S3_PREFIX to enable CUR sync, or use Generate recommendations from the stored billing data instead.");
+      }
+      throw new Error(text);
     }
     throw error;
   }

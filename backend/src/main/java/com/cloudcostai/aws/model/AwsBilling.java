@@ -37,7 +37,7 @@ public class AwsBilling {
     @Column(name = "usage_type", length = 255)
     private String usageType;
 
-    @Column(name = "resource_id", length = 500)
+    @Column(name = "resource_id", nullable = false, length = 500)
     private String resourceId;
 
     @Column(name = "line_item_type", length = 100)
@@ -122,7 +122,7 @@ public class AwsBilling {
         this.region = region;
         this.productName = productName;
         this.usageType = usageType;
-        this.resourceId = resourceId;
+        this.resourceId = ResourceIds.store(resourceId);
         this.lineItemType = lineItemType;
         this.usageStartDate = usageStartDate;
         this.usageEndDate = usageEndDate;
@@ -159,7 +159,7 @@ public class AwsBilling {
         this.region = region;
         this.productName = productName;
         this.usageType = usageType;
-        this.resourceId = resourceId;
+        this.resourceId = ResourceIds.store(resourceId);
         this.lineItemType = lineItemType;
         this.usageStartDate = usageStartDate;
         this.usageEndDate = usageEndDate;

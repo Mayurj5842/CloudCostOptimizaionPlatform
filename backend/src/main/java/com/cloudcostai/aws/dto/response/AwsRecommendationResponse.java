@@ -19,5 +19,7 @@ public record AwsRecommendationResponse(String accountId, String currency, List<
                                   BigDecimal currentCost, String problem, String reason, String recommendation, String recommendedAction,
                                   BigDecimal estimatedMonthlySaving, String priority, String category, String status,
                                   String createdAt, String resourcePath, String resourceId, String evidence,
-                                  String billingMonth, String dataSource) {}
+                                  String billingMonth, String dataSource,
+                                  BigDecimal costSharePercentage, BigDecimal periodTotalCost,
+                                  BigDecimal concentrationThreshold, String resourceState, String savingsBasis) {}
 }

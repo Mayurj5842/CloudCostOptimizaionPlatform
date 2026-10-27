@@ -15,11 +15,19 @@ const summaryCards = [["Total AWS resources", "all", "totalResources"], ["EC2 in
 export default function ResourcesPage() {
   const { account, connectionToken } = useCloudAccountStore();
   const [selectedType, setSelectedType] = useState("all");
-  const [targetResourceId, setTargetResourceId] = useState<string | null>(null);
-  useEffect(() => {
+  const [targetResourceId, setTargetResourceId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
     const resourceId = new URLSearchParams(window.location.search).get("resourceId")?.trim();
-    setTargetResourceId(resourceId || null);
-  }, []);
+    return resourceId || null;
+  });
+  useEffect(() => {
+    if (targetResourceId) return;
+    const resourceId = new URLSearchParams(window.location.search).get("resourceId")?.trim();
+    if (resourceId) {
+      const timeoutId = setTimeout(() => setTargetResourceId(resourceId), 0);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [targetResourceId]);
   const resources = useQuery({
     queryKey: ["aws-resources", account?.accountId, connectionToken],
     queryFn: () => fetchAwsResources(connectionToken as string),
@@ -56,10 +64,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
 }
 
 function ResourceInventory({ data, selectedType, onSelect, targetResourceId }: { data: AwsResourceResponse; selectedType: string; onSelect: (type: string) => void; targetResourceId: string | null }) {
-  const [search, setSearch] = useState("");
-  useEffect(() => {
-    if (targetResourceId) setSearch(targetResourceId);
-  }, [targetResourceId]);
+  const [search, setSearch] = useState(targetResourceId ?? "");
   const matches = (values: Array<string | number | null | undefined>) => !search || values.some(value => String(value ?? "").toLowerCase().includes(search.toLowerCase()));
   const ec2 = data.ec2Instances.filter(item => matches([item.instanceId, item.name, item.instanceType, item.state, item.region]));
   const ebs = data.ebsVolumes.filter(item => matches([item.volumeId, item.volumeType, item.state, item.availabilityZone, item.attachedInstanceId]));

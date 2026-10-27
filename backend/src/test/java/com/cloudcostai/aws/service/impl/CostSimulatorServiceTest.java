@@ -189,6 +189,79 @@ class CostSimulatorServiceTest {
                 .hasMessageContaining("YYYY-MM");
     }
 
+    @Test
+    void derivesResourceSavingsFromMatchedBillingWhenNoStoredEstimate() {
+        AwsRecommendation resource = recommendation("Amazon EC2", "i-derived-1", null);
+        stubBilling(List.of(
+                billingRowWithResource(LocalDate.of(2026, 9, 1), "420.00", "Amazon EC2", null),
+                billingRowWithResource(LocalDate.of(2026, 9, 10), "30.00", "Amazon EC2", "i-derived-1")));
+        when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(ACCOUNT_ID, "2026-09"))
+                .thenReturn(List.of(resource));
+
+        var result = service().simulate("token", new CostSimulationRequest("2026-09", List.of(resource.getId())));
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(result.currentMonthlyCost()).isEqualByComparingTo("450.00");
+        assertThat(result.estimatedMonthlySaving()).isEqualByComparingTo("30.00");
+        assertThat(result.scenarios().get(0).status()).isEqualTo("AVAILABLE");
+        assertThat(result.scenarios().get(0).estimateBasis()).isEqualTo("DERIVED_RESOURCE_COST");
+    }
+
+    @Test
+    void derivesServiceRateSavingsWhenNoStoredEstimateAndNoResourceMatch() {
+        AwsRecommendation serviceLevel = recommendation("Amazon EC2", null, null);
+        stubBilling(List.of(billingRow(LocalDate.of(2026, 9, 1), "400.00"),
+                billingRow(LocalDate.of(2026, 9, 10), "20.00")));
+        when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc(ACCOUNT_ID, "2026-09"))
+                .thenReturn(List.of(serviceLevel));
+
+        var result = service().simulate("token", new CostSimulationRequest("2026-09", List.of(serviceLevel.getId())));
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(result.estimatedMonthlySaving()).isEqualByComparingTo("42.00");
+        assertThat(result.scenarios().get(0).estimateBasis()).isEqualTo("DERIVED_SERVICE_RATE");
+    }
+
+    @Test
+    void whatIfReductionProjectsProportionalSaving() {
+        stubBilling(List.of(billingRow(LocalDate.of(2026, 9, 1), "400.00"),
+                billingRow(LocalDate.of(2026, 9, 10), "20.00")));
+
+        var result = service().simulate("token",
+                new CostSimulationRequest("2026-09", null, new BigDecimal("25")));
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        assertThat(result.mode()).isEqualTo("WHAT_IF");
+        assertThat(result.estimatedMonthlySaving()).isEqualByComparingTo("105.00");
+        assertThat(result.estimatedMonthlyCost()).isEqualByComparingTo("315.00");
+        assertThat(result.estimatedAnnualSaving()).isEqualByComparingTo("1260.00");
+        assertThat(result.whatIfReductionPercent()).isEqualByComparingTo("25.00");
+        assertThat(result.scenarios()).singleElement().satisfies(scenario -> {
+            assertThat(scenario.estimateBasis()).isEqualTo("WHAT_IF");
+            assertThat(scenario.estimatedMonthlySaving()).isEqualByComparingTo("105.00");
+        });
+    }
+
+    @Test
+    void rejectsMixingWhatIfReductionWithRecommendations() {
+        assertThatThrownBy(() -> service().simulate("token",
+                new CostSimulationRequest("2026-09", List.of(UUID.randomUUID()), new BigDecimal("10"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not both");
+    }
+
+    @Test
+    void rejectsInvalidWhatIfPercentage() {
+        assertThatThrownBy(() -> service().simulate("token",
+                new CostSimulationRequest("2026-09", null, BigDecimal.ZERO)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("between 0 and 100");
+        assertThatThrownBy(() -> service().simulate("token",
+                new CostSimulationRequest("2026-09", null, new BigDecimal("120"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("between 0 and 100");
+    }
+
     private CostSimulatorService service() {
         when(sessionService.getSession("token")).thenReturn(new AwsConnectionSessionService.ConnectionSession(
                 "access", "secret", "us-east-1", ACCOUNT_ID, Instant.now().plusSeconds(600)));
@@ -206,6 +279,12 @@ class CostSimulatorServiceTest {
         return new AwsBilling(ACCOUNT_ID, date, date, "Amazon EC2", "us-east-1", BigDecimal.ONE,
                 new BigDecimal(amount), "USD", false, "Amazon EC2", "UnblendedCost", null,
                 "CUR_2_0", date, date, "cur-" + date, "CUR_2_0");
+    }
+
+    private AwsBilling billingRowWithResource(LocalDate date, String amount, String service, String resourceId) {
+        return new AwsBilling(ACCOUNT_ID, date, date, service, "us-east-1", BigDecimal.ONE,
+                new BigDecimal(amount), "USD", false, service, "UnblendedCost", resourceId,
+                "CUR_2_0", date, date, "cur-" + service + "-" + resourceId + "-" + date, "CUR_2_0");
     }
 
     private AwsRecommendation recommendation(String service, String resourceId, String savings) {

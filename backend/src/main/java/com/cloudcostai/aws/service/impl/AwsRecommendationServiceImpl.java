@@ -5,6 +5,7 @@ import com.cloudcostai.aws.dto.response.AwsRecommendationResponse.Recommendation
 import com.cloudcostai.aws.dto.response.AwsResourceResponse;
 import com.cloudcostai.aws.model.AwsBilling;
 import com.cloudcostai.aws.model.AwsRecommendation;
+import com.cloudcostai.aws.model.ResourceIds;
 import com.cloudcostai.aws.repository.AwsBillingRepository;
 import com.cloudcostai.aws.repository.AwsRecommendationRepository;
 import com.cloudcostai.aws.service.AwsConnectionSessionService;
@@ -200,12 +201,14 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
                 && current.compareTo(previous.multiply(BigDecimal.valueOf(1.5))) > 0) {
             String displayedService = displayService(service);
             String sourceName = "COST_EXPLORER".equals(dataSource) ? "Cost Explorer" : "CUR 2.0";
+            BigDecimal increase = current.subtract(previous);
+            BigDecimal estimatedSaving = increase.compareTo(ZERO) > 0 ? increase : null;
             result.add(draft("spike-service-" + service, displayedService + " Cost Increase Opportunity", "Trend",
                 "High", displayedService, null, "All regions", current,
                 sourceName + " stored actual spend increased by at least 50% compared with the previous month. "
                     + billingDimensions(rows, service, start, end),
                 "PostgreSQL billing data changed from " + money(previous) + " to " + money(current) + ".",
-                "Review recent deployments, usage types, and resource-level charges for this service.", null));
+                "Review recent deployments, usage types, and resource-level charges for this service. Estimated monthly savings shown are heuristic (based on the month-over-month increase) and not guaranteed.", estimatedSaving));
             }
         });
         if ("COST_EXPLORER".equals(dataSource)) {
@@ -216,31 +219,32 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
             boolean exactBillingMatch = actualCost.signum() > 0;
             result.add(draft("unused-ebs-" + resourceId,
                 exactBillingMatch ? "Unattached volume is incurring cost" : "Unattached EBS volume detected",
-                "Utilization", "Medium", "Amazon EBS", resourceId,
+                "Unused Resource Review", "Medium", "Amazon EBS", resourceId,
                 region, exactBillingMatch ? actualCost : null,
                 exactBillingMatch
                     ? "CUR 2.0 reports " + money(actualCost) + " in actual charges matched to this volume; live AWS resource data reports it as unattached."
                     : "Live AWS resource data reports this volume as unattached. CUR 2.0 reports positive EBS charges in this region, but those rows have no resource ID and cannot be attributed to this volume.",
                 exactBillingMatch
-                    ? "The billing and current resource records both identify this volume as unused and billable."
+                    ? "The billing and current resource records both identify this volume as unused and billable. The estimated monthly saving equals the matched billed cost; this is a heuristic estimate, not a guarantee."
                     : "The volume state is verified, but its individual cost and potential savings are unknown (NO_DATA).",
-                "Verify ownership and retention needs, then delete the volume if it is no longer required.", null));
+                "Verify ownership and retention needs, then delete the volume if it is no longer required.", exactBillingMatch ? actualCost : null));
         });
         resourceEvidence.stoppedEc2().forEach((resourceId, region) -> {
             BigDecimal actualCost = matchedResourceCost(resourceRows, resourceId, region, this::isEc2);
             boolean exactBillingMatch = actualCost.signum() > 0;
             result.add(draft("stopped-ec2-" + resourceId,
                 exactBillingMatch ? "Stopped instance still incurred cost" : "Stopped EC2 instance detected",
-                "Utilization", "High", "EC2", resourceId,
+                "Unused Resource Review", "High", "EC2", resourceId,
                 region, exactBillingMatch ? actualCost : null,
                 exactBillingMatch
                     ? "AWS reports this EC2 instance as stopped, while CUR 2.0 records " + money(actualCost) + " in positive matched cost."
                     : "AWS reports this EC2 instance as stopped. CUR 2.0 reports positive EC2 charges in this region, but those rows have no resource ID and cannot be attributed to this instance.",
                 exactBillingMatch
-                    ? "The stopped instance has a real billing charge; no utilization or savings estimate is inferred."
+                    ? "The stopped instance has a real billing charge. Estimated monthly saving equals the matched billed cost (heuristic estimate, not guaranteed)."
                     : "The instance state is verified, but its individual cost and potential savings are unknown (NO_DATA).",
-                "Review the stopped instance and associated resources; terminate it only after confirming it is no longer required.", null));
+                "Review the stopped instance and associated resources; terminate it only after confirming it is no longer required.", exactBillingMatch ? actualCost : null));
         });
+
         return result;
     }
 
@@ -301,10 +305,12 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
             String key = "cost-concentration-" + dimension + "-"
                 + UUID.nameUUIDFromBytes((accountId + ":" + dimension + ":" + value)
                     .getBytes(StandardCharsets.UTF_8));
-            findings.add(new RecommendationDraft(key, title, "Cost concentration", priority, service, null,
+            // Heuristic: potential savings estimate shown as the concentrated spend amount (not guaranteed).
+            BigDecimal heuristicSavings = actualCost.compareTo(ZERO) > 0 ? actualCost : null;
+            findings.add(new RecommendationDraft(key, title, "High Cost Service Detection", priority, service, null,
                 region, actualCost, reason, rationale,
-                "Review the listed services, regions, usage types, and products against workload needs and budgets.",
-                null));
+                "Review the listed services, regions, usage types, and products against workload needs and budgets. Estimated monthly savings shown are heuristic estimates (not guaranteed).",
+                heuristicSavings));
         });
     }
 
@@ -459,13 +465,13 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
         }
         if (key.startsWith("unused-resource-")) return false;
         if (key.startsWith("unused-ebs-")) {
-            String resourceId = normalized(item.getResourceId());
+            String resourceId = realResourceId(item.getResourceId());
             String region = resourceId == null ? null : resourceEvidence.unattachedEbs().get(resourceId);
             return region != null && isEbs(item.getService())
                 && hasBillingForResourceRegion(resourceRows, resourceId, region, this::isEbs, true);
         }
         if (key.startsWith("stopped-ec2-")) {
-            String resourceId = normalized(item.getResourceId());
+            String resourceId = realResourceId(item.getResourceId());
             String region = resourceId == null ? null : resourceEvidence.stoppedEc2().get(resourceId);
             return region != null
                 && hasBillingForResourceRegion(resourceRows, resourceId, region, this::isEc2, false);
@@ -503,9 +509,8 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
     }
 
     private boolean sameResourceId(String first, String second) {
-        String normalizedFirst = normalized(first);
-        String normalizedSecond = normalized(second);
-        return normalizedFirst != null && normalizedFirst.equals(normalizedSecond);
+        return ResourceIds.isPresent(first) && ResourceIds.isPresent(second)
+            && normalized(first).equals(normalized(second));
     }
 
     private boolean sameRegion(String first, String second) {
@@ -567,11 +572,24 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
     }
+    private String realResourceId(String value) { return ResourceIds.isPresent(value) ? normalized(value) : null; }
 
     private RecommendationDraft draft(String key, String title, String category, String severity, String service, String resourceId, String region, BigDecimal currentCost, String reason, String recommendation, String action, BigDecimal potentialSavings) { return new RecommendationDraft(key, title, category, severity, service, resourceId, region, moneyOrNull(currentCost), reason, recommendation, action, potentialSavings == null ? null : money(potentialSavings)); }
     private AwsRecommendationResponse response(String accountId, String currency, List<AwsRecommendation> entities) { return new AwsRecommendationResponse(accountId, currency, entities.stream().map(this::toResponse).sorted(Comparator.comparingInt(this::priorityRank).reversed()).toList()); }
     private Recommendation toResponse(AwsRecommendation item) { return toResponse(item, "CUR_2_0"); }
-    private Recommendation toResponse(AwsRecommendation item, String dataSource) { return new Recommendation(item.getId().toString(), item.getService(), blank(item.getRegion(), "Unknown"), blank(item.getResourceId(), "Service total"), item.getCurrentCost(), item.getTitle(), item.getReason(), item.getRecommendation(), item.getAction(), item.getPotentialSavings() == null ? null : money(item.getPotentialSavings()), item.getSeverity(), item.getCategory(), item.getStatus(), item.getCreatedAt().toString(), resourcePath(item.getService()), item.getResourceId(), item.getReason(), item.getBillingMonth(), dataSource); }
+    private Recommendation toResponse(AwsRecommendation item, String dataSource) {
+        String resourceId = item.getResourceId();
+        String resource = ResourceIds.isPresent(resourceId) ? resourceId : "Service total";
+        BigDecimal estimatedSaving = item.getPotentialSavings() == null ? null : money(item.getPotentialSavings());
+        RecommendationEvidenceParser.Evidence evidence = RecommendationEvidenceParser.parse(
+            item.getReason(), item.getTitle(), item.getPotentialSavings());
+        return new Recommendation(item.getId().toString(), item.getService(), blank(item.getRegion(), "Unknown"),
+            resource, item.getCurrentCost(), item.getTitle(), item.getReason(), item.getRecommendation(),
+            item.getAction(), estimatedSaving, item.getSeverity(), item.getCategory(), item.getStatus(),
+            item.getCreatedAt().toString(), resourcePath(item.getService()), resourceId, item.getReason(),
+            item.getBillingMonth(), dataSource, evidence.costSharePercentage(), evidence.periodTotalCost(),
+            evidence.concentrationThreshold(), evidence.resourceState(), evidence.savingsBasis());
+    }
     private Map<String, BigDecimal> totals(List<AwsBilling> rows, LocalDate start, LocalDate end, Function<AwsBilling, String> key) { return rows.stream().filter(row -> inRange(row, start, end)).collect(Collectors.groupingBy(row -> blank(key.apply(row), "Unknown"), Collectors.reducing(ZERO, this::cost, BigDecimal::add))); }
     private boolean inRange(AwsBilling row, LocalDate start, LocalDate end) { LocalDate date = billingDate(row); return date != null && !date.isBefore(start) && date.isBefore(end); }
     private LocalDate billingDate(AwsBilling row) {
@@ -581,7 +599,7 @@ public class AwsRecommendationServiceImpl implements AwsRecommendationService {
         return row.getUsageStartDate() == null ? row.getBillingPeriodStart() : row.getUsageStartDate();
     }
     private BigDecimal cost(AwsBilling row) { return row.getCostAmount() == null ? ZERO : row.getCostAmount(); }
-    private boolean hasResource(AwsBilling row) { return row.getResourceId() != null && !row.getResourceId().isBlank(); }
+    private boolean hasResource(AwsBilling row) { return ResourceIds.isPresent(row.getResourceId()); }
     private String service(AwsBilling row) { return blank(row.getServiceName(), "Unknown"); }
     private String displayService(String value) { String service = value.toLowerCase(); return service.contains("s3") || service.contains("simple storage") ? "S3" : service.contains("rds") || service.contains("relational database") ? "RDS" : service.contains("lambda") ? "Lambda" : service.contains("ec2") || service.contains("elastic compute") ? "EC2" : value; }
     private String resourcePath(String service) { return service.toLowerCase().contains("ec2") ? "/resources" : "/billing"; }

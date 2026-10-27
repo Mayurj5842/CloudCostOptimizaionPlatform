@@ -100,6 +100,21 @@ export type AwsDashboardResponse = {
     currency: string;
     status: string;
   } | null;
+  forecast: {
+    value: number | null;
+    currency: string;
+    period: string;
+    actualToDate: number | null;
+    dailyRunRate: number | null;
+    projectedRemaining: number | null;
+    previousMonth: number | null;
+    percentageChange: number | null;
+    daysObserved: number;
+    daysInMonth: number;
+    remainingDays: number;
+    method: "RUN_RATE_PROJECTION" | "FINAL_ACTUAL" | "PRIOR_MONTH_RUN_RATE" | "NO_BILLING_DATA";
+    dataStatus?: "AVAILABLE" | "NO_BILLING_DATA";
+  } | null;
   costTrend: Array<{ month: string; cost: number }>;
   serviceDistribution: Array<{ name: string; value: number }>;
   billing: {
@@ -414,6 +429,11 @@ export type AwsRecommendation = {
   evidence: string | null;
   billingMonth: string;
   dataSource: string;
+  costSharePercentage: number | null;
+  periodTotalCost: number | null;
+  concentrationThreshold: number | null;
+  resourceState: string | null;
+  savingsBasis: "HEURISTIC_ESTIMATE" | "INSUFFICIENT_DATA" | string;
 };
 
 export type AwsRecommendationResponse = {
@@ -446,28 +466,32 @@ export type AwsCostSimulationResponse = {
   billingMonth: string;
   currency: string | null;
   dataSource: string;
+  mode: "RECOMMENDATIONS" | "WHAT_IF" | string;
   status: "SUCCESS" | "NO_BILLING_DATA" | "INSUFFICIENT_PRICING_DATA" | string;
   message: string | null;
   currentMonthlyCost: number | null;
   estimatedMonthlyCost: number | null;
   estimatedMonthlySaving: number | null;
   estimatedAnnualSaving: number | null;
+  whatIfReductionPercent: number | null;
   scenarios: Array<{
-    recommendationId: string;
+    recommendationId: string | null;
     title: string;
-    service: string;
+    service: string | null;
     resourceId: string | null;
     region: string | null;
-    status: "AVAILABLE" | "INSUFFICIENT_PRICING_DATA" | "ALREADY_APPLIED" | string;
+    status: "AVAILABLE" | "INSUFFICIENT_PRICING_DATA" | "ALREADY_APPLIED" | "NOT_ACTIONABLE" | string;
+    estimateBasis: string | null;
     estimatedMonthlySaving: number | null;
     message: string | null;
   }>;
 };
 
-export async function simulateAwsCost(connectionToken: string, month: string, recommendationIds: string[]): Promise<AwsCostSimulationResponse> {
+export async function simulateAwsCost(connectionToken: string, month: string, recommendationIds: string[], whatIfReductionPercent?: number | null): Promise<AwsCostSimulationResponse> {
   const response = await axios.post<ApiResponse<AwsCostSimulationResponse>>(`${apiUrl}/api/aws/optimization/simulator`, {
     month,
-    recommendationIds,
+    recommendationIds: recommendationIds.length ? recommendationIds : null,
+    whatIfReductionPercent: whatIfReductionPercent ?? null,
   }, {
     headers: getAwsHeaders(connectionToken),
   });
@@ -558,20 +582,34 @@ export type AwsReportResponse = {
   message: string | null;
   budgets: Budget[];
   alerts: BudgetAlert[];
+  availableServices?: string[];
+  availableRegions?: string[];
 };
 
-export async function fetchAwsReport(connectionToken: string, month: string): Promise<AwsReportResponse> {
+export type AwsReportRequestParams = {
+  month?: string;
+  startDate?: string;
+  endDate?: string;
+  granularity?: string;
+  service?: string;
+  region?: string;
+  groupBy?: string;
+};
+
+export async function fetchAwsReport(connectionToken: string, params: string | AwsReportRequestParams): Promise<AwsReportResponse> {
+  const requestParams: Record<string, unknown> = typeof params === "string" ? { month: params } : { ...params };
   const response = await axios.get<ApiResponse<AwsReportResponse>>(`${apiUrl}/api/aws/reports`, {
-    params: { month },
+    params: requestParams,
     headers: { "X-AWS-Connection-Token": connectionToken },
   });
   return response.data.data;
 }
 
-export async function downloadAwsReportPdf(connectionToken: string, month: string): Promise<Blob> {
+export async function downloadAwsReportPdf(connectionToken: string, params: string | AwsReportRequestParams): Promise<Blob> {
   try {
+    const requestParams: Record<string, unknown> = typeof params === "string" ? { month: params } : { ...params };
     const response = await axios.get(`${apiUrl}/api/aws/reports/pdf`, {
-      params: { month },
+      params: requestParams,
       responseType: "blob",
       headers: getAwsHeaders(connectionToken),
     });

@@ -115,7 +115,7 @@ class AwsRecommendationServiceImplTest {
         when(resourceService.discoverResources("token")).thenReturn(resources());
         AwsRecommendationServiceImpl service = serviceWithResources(List.of(
             row("Amazon EBS", "2026-08-15", "16.00", "ebs", "CUR_2_0", BigDecimal.ZERO)));
-        AwsRecommendation recommendation = new AwsRecommendation("123456789012", "unused-ebs-vol-123", "Review unused EBS volume", "Utilization", "Medium", "Amazon EBS", "vol-123", "ap-south-1", new BigDecimal("16.00"), "reason", "recommendation", "action", new BigDecimal("16.00"), "New", "2026-08");
+        AwsRecommendation recommendation = new AwsRecommendation("123456789012", "unused-ebs-vol-123", "Review unused EBS volume", "Unused Resource Review", "Medium", "Amazon EBS", "vol-123", "ap-south-1", new BigDecimal("16.00"), "reason", "recommendation", "action", new BigDecimal("16.00"), "New", "2026-08");
         when(recommendationRepository.findByAwsAccountIdAndBillingMonthOrderByCreatedAtDesc("123456789012", "2026-08"))
             .thenReturn(List.of(recommendation));
 
@@ -123,15 +123,17 @@ class AwsRecommendationServiceImplTest {
 
         assertThat(response.recommendations()).singleElement().satisfies(item -> assertThat(item.estimatedMonthlySaving()).isEqualByComparingTo("16.00"));
         assertThat(response.recommendations()).singleElement().extracting(item -> item.service()).isEqualTo("Amazon EBS");
+        assertThat(response.recommendations()).singleElement().satisfies(item ->
+            assertThat(item.savingsBasis()).isEqualTo("HEURISTIC_ESTIMATE"));
     }
 
     @Test
     void generationPreservesAnExistingStoredSavingsEstimateWhenNoNewEstimateCanBeCalculated() {
         when(resourceService.discoverResources("token")).thenReturn(resources());
         AwsRecommendationServiceImpl service = serviceWithResources(List.of(
-            row("Amazon EBS", "2026-08-15", "16.00", "ebs", "CUR_2_0", BigDecimal.ZERO)));
+            rowWithRegion("Amazon EBS", "2026-08-15", "16.00", null, "ap-south-1", BigDecimal.ZERO)));
         AwsRecommendation stored = new AwsRecommendation("123456789012", "unused-ebs-vol-123",
-            "Previously reviewed EBS finding", "Utilization", "Medium", "Amazon EBS", "vol-123",
+            "Previously reviewed EBS finding", "Unused Resource Review", "Medium", "Amazon EBS", "vol-123",
             "ap-south-1", new BigDecimal("16.00"), "Stored CUR evidence", "Recommendation",
             "Action", new BigDecimal("4.25"), "New", "2026-08");
         when(recommendationRepository.findByAwsAccountIdAndRecommendationKey("123456789012", "unused-ebs-vol-123"))
@@ -191,7 +193,7 @@ class AwsRecommendationServiceImplTest {
             assertThat(recommendation.dataSource()).isEqualTo("COST_EXPLORER");
             assertThat(recommendation.service()).isEqualTo("EC2");
             assertThat(recommendation.region()).isEqualTo("All regions");
-            assertThat(recommendation.resourceId()).isNull();
+            assertThat(recommendation.resourceId()).isEqualTo("N/A");
             assertThat(recommendation.currentCost()).isEqualByComparingTo("20.00");
             assertThat(recommendation.estimatedMonthlySaving()).isNull();
             assertThat(recommendation.reason()).contains("Cost Explorer", "ap-east-2", "Usage", "Amazon EC2");
@@ -215,8 +217,13 @@ class AwsRecommendationServiceImplTest {
                 "cost share=100.00%", "billing period=2026-09",
                 "stored Cost Explorer billing data in PostgreSQL aws_billing");
             assertThat(item.dataSource()).isEqualTo("COST_EXPLORER");
-            assertThat(item.resourceId()).isNull();
+            assertThat(item.resourceId()).isEqualTo("N/A");
             assertThat(item.estimatedMonthlySaving()).isNull();
+            assertThat(item.costSharePercentage()).isEqualByComparingTo("100.00");
+            assertThat(item.periodTotalCost()).isEqualByComparingTo("20.00");
+            assertThat(item.concentrationThreshold()).isEqualByComparingTo("25.00");
+            assertThat(item.resourceState()).isNull();
+            assertThat(item.savingsBasis()).isEqualTo("INSUFFICIENT_DATA");
         });
         verify(resourceService, never()).discoverResourcesForRecommendations(any(), any());
         verify(resourceService, never()).discoverResources(any());
@@ -238,15 +245,18 @@ class AwsRecommendationServiceImplTest {
         assertThat(response.status()).isEqualTo("SUCCESS");
         assertThat(response.recommendations()).hasSize(4);
         assertThat(response.recommendations()).allSatisfy(item -> {
-            assertThat(item.category()).isEqualTo("Cost concentration");
+            assertThat(item.category()).isEqualTo("High Cost Service Detection");
             assertThat(item.priority()).isEqualTo("High");
             assertThat(item.currentCost()).isEqualByComparingTo("75.00");
             assertThat(item.estimatedMonthlySaving()).isNull();
             assertThat(item.reason()).contains("actual cost=75.00 USD", "total cost=100.00 USD",
                 "cost share=75.00%", "billing period=2026-09", "stored Cost Explorer billing data");
             assertThat(item.dataSource()).isEqualTo("COST_EXPLORER");
-            assertThat(item.resourceId()).isNull();
+            assertThat(item.resourceId()).isEqualTo("N/A");
         });
+        // High Cost Service Detection recommendations should not have heuristic savings
+        assertThat(response.recommendations()).allSatisfy(item ->
+            assertThat(item.reason()).doesNotContain("Estimated Savings (Heuristic)"));
         assertThat(response.recommendations()).extracting(AwsRecommendationResponse.Recommendation::problem)
             .anyMatch(title -> title.contains("service cost concentration"))
             .anyMatch(title -> title.contains("region cost concentration"))
@@ -272,7 +282,7 @@ class AwsRecommendationServiceImplTest {
         String key = "cost-concentration-service-" + java.util.UUID.nameUUIDFromBytes(
             (accountId + ":service:Amazon EC2").getBytes(java.nio.charset.StandardCharsets.UTF_8));
         AwsRecommendation stored = new AwsRecommendation(accountId, key,
-            "High service cost concentration: Amazon EC2", "Cost concentration", "High", "EC2", null,
+            "High service cost concentration: Amazon EC2", "High Cost Service Detection", "High", "EC2", null,
             "Multiple regions", new BigDecimal("75.00"), "Stored actual Cost Explorer evidence",
             "Review this service's share of stored spend.", "Review the service dimensions.", null,
             "New", "2026-09");
@@ -369,7 +379,8 @@ class AwsRecommendationServiceImplTest {
             assertThat(item.priority()).isEqualTo("High");
             assertThat(item.resourceId()).isEqualTo("i-123");
             assertThat(item.currentCost()).isEqualByComparingTo("0.03");
-            assertThat(item.estimatedMonthlySaving()).isNull();
+            assertThat(item.estimatedMonthlySaving()).isEqualByComparingTo("0.03");
+            assertThat(item.savingsBasis()).isEqualTo("HEURISTIC_ESTIMATE");
         });
         verify(resourceService).discoverResources("token");
     }
@@ -439,7 +450,7 @@ class AwsRecommendationServiceImplTest {
         AwsRecommendationResponse response = service.generateRecommendations("token", "2026-09");
 
         assertThat(resolver.resolve(accountId, YearMonth.parse("2026-09")).rows())
-            .singleElement().extracting(AwsBilling::getResourceId).isNull();
+            .singleElement().extracting(AwsBilling::getResourceId).isEqualTo("N/A");
         assertThat(resolver.rows(accountId, "CUR_2_0", LocalDate.parse("2026-09-01"), LocalDate.parse("2026-10-01")))
             .singleElement().extracting(AwsBilling::getResourceId).isEqualTo("i-test123");
         assertThat(response.totalSpend()).isEqualByComparingTo("7.24");
@@ -718,11 +729,16 @@ class AwsRecommendationServiceImplTest {
         assertThat(response.status()).isEqualTo("SUCCESS");
         assertThat(response.recommendations()).singleElement()
             .extracting(item -> item.problem()).isEqualTo("Unattached volume is incurring cost");
+        assertThat(response.recommendations()).singleElement().satisfies(item -> {
+            assertThat(item.resourceState()).isEqualTo("UNATTACHED");
+            assertThat(item.estimatedMonthlySaving()).isEqualByComparingTo("16.00");
+            assertThat(item.savingsBasis()).isEqualTo("HEURISTIC_ESTIMATE");
+        });
         ArgumentCaptor<AwsRecommendation> saved = ArgumentCaptor.forClass(AwsRecommendation.class);
         verify(recommendationRepository, org.mockito.Mockito.times(1)).save(saved.capture());
         assertThat(saved.getValue().getTitle()).isEqualTo("Unattached volume is incurring cost");
         assertThat(saved.getValue().getReason()).contains("actual charges", "unattached");
-        assertThat(saved.getValue().getPotentialSavings()).isNull();
+        assertThat(saved.getValue().getPotentialSavings()).isEqualByComparingTo("16.00");
     }
 
     @Test
@@ -824,7 +840,7 @@ class AwsRecommendationServiceImplTest {
         AwsBilling curDetail = row(accountId, "Amazon Elastic Compute Cloud - Compute", "2026-09-10",
             "0.03", "i-test123", "CUR_2_0", BigDecimal.ONE, false);
         AwsRecommendation stoppedFinding = new AwsRecommendation(accountId, "stopped-ec2-i-test123",
-            "Stopped EC2 Instance Cost Review", "Utilization", "Medium", "EC2", "i-test123", "ap-south-1",
+            "Stopped EC2 Instance Cost Review", "Unused Resource Review", "Medium", "EC2", "i-test123", "ap-south-1",
             new BigDecimal("0.03"), "Matched positive CUR charge", "Evidence", "Review the instance", null,
             "New", "2026-09");
         AwsResourceResponse stoppedResource = new AwsResourceResponse(accountId, "ap-south-1",

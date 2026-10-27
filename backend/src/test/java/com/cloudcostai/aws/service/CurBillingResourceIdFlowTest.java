@@ -134,7 +134,7 @@ class CurBillingResourceIdFlowTest {
     }
 
     @Test
-    void missingResourceIdColumnIsReportedAsMissingAndNeverInvented() throws Exception {
+    void missingResourceIdColumnStoresPlaceholderAndNeverInventsAResourceId() throws Exception {
         String csv = "line_item_usage_account_id,line_item_usage_start_date,line_item_unblended_cost\n"
                 + ACCOUNT_ID + ",2026-09-10T00:00:00Z,0.42\n";
         CurS3Service parser = new CurS3Service(org.mockito.Mockito.mock(AwsClientFactory.class), syncProperties);
@@ -157,7 +157,7 @@ class CurBillingResourceIdFlowTest {
         ArgumentCaptor<AwsBilling> savedBilling = ArgumentCaptor.forClass(AwsBilling.class);
         verify(billingRepository).save(savedBilling.capture());
         assertThat(savedBilling.getValue().getCostAmount()).isEqualByComparingTo("0.42");
-        assertThat(savedBilling.getValue().getResourceId()).isNull();
+        assertThat(savedBilling.getValue().getResourceId()).isEqualTo("N/A");
     }
 
         @Test
@@ -217,7 +217,7 @@ class CurBillingResourceIdFlowTest {
 
                 ArgumentCaptor<AwsBilling> persisted = ArgumentCaptor.forClass(AwsBilling.class);
                 verify(billingRepository, org.mockito.Mockito.times(2)).save(persisted.capture());
-                assertThat(persisted.getAllValues()).extracting(AwsBilling::getResourceId).containsExactly((String) null, "i-test123");
+                assertThat(persisted.getAllValues()).extracting(AwsBilling::getResourceId).containsExactly("N/A", "i-test123");
                 assertThat(persisted.getAllValues().get(0).getRecordKey())
                                 .isNotEqualTo(persisted.getAllValues().get(1).getRecordKey());
         }

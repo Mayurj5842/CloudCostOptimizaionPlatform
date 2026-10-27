@@ -128,11 +128,21 @@ public class AwsCostAnalyticsServiceImpl implements AwsCostAnalyticsService {
     }
 
     private Budget budget(String accountId, DateRange selected, List<AwsBilling> rows, String currency) {
-        com.cloudcostai.billing.model.Budget configured = budgetRepository.findFirstByAwsAccountIdAndStatusOrderByCreatedAtDesc(accountId, "ACTIVE").orElse(null);
+        com.cloudcostai.billing.model.Budget configured = applicableAccountBudget(accountId, selected);
         if (configured == null) return new Budget(false, null, null, null, currency);
         BigDecimal actual = rows.isEmpty() ? null : sum(rows);
         BigDecimal usage = actual == null || configured.getAmount() == null || configured.getAmount().signum() == 0 ? null : actual.multiply(BigDecimal.valueOf(100)).divide(configured.getAmount(), 2, RoundingMode.HALF_UP);
         return new Budget(true, configured.getAmount(), actual, usage, configured.getCurrency());
+    }
+
+    private com.cloudcostai.billing.model.Budget applicableAccountBudget(String accountId, DateRange selected) {
+        if (budgetRepository == null) return null;
+        YearMonth month = YearMonth.from(selected.start());
+        LocalDate monthEnd = month.atEndOfMonth();
+        LocalDate monthStart = month.atDay(1);
+        return budgetRepository.findFirstByAwsAccountIdAndServiceNameIsNullAndEnabledTrueAndStartDateLessThanEqualAndEndDateGreaterThanEqualOrderByCreatedAtDesc(accountId, monthEnd, monthStart)
+            .or(() -> budgetRepository.findFirstByAwsAccountIdAndEnabledTrueAndStartDateLessThanEqualAndEndDateGreaterThanEqualOrderByCreatedAtDesc(accountId, monthEnd, monthStart))
+            .orElse(null);
     }
 
     private PotentialSavings savings(String accountId, String currency) {

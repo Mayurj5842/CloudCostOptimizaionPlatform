@@ -2,13 +2,16 @@
 
 import { useState } from "react";
 import StatCard from "./stat-card";
-import { AlertTriangle, DollarSign, LoaderCircle, PiggyBank, Server, Wallet, X } from "lucide-react";
+import { AlertTriangle, DollarSign, LoaderCircle, PiggyBank, Server, TrendingUp, Wallet, X } from "lucide-react";
 import { useAwsDashboard } from "./use-aws-dashboard";
-import { fetchAwsResources, fetchLiveAwsCost, generateAwsRecommendations, type AwsResourceResponse } from "@/services/aws-connection";
+import { fetchAwsResources, fetchBudgets, fetchLiveAwsCost, generateAwsRecommendations, type AwsResourceResponse, type Budget } from "@/services/aws-connection";
 import { useCloudAccountStore } from "@/store/cloud-account-store";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BUDGET_TONE_LABEL, summarizeBudgets, worstBudgetTone } from "@/features/budgets/budget-metrics";
+import { BudgetUsageDialog } from "@/features/budgets/budget-usage-dialog";
+import { FORECAST_METHOD_LABEL, ForecastDialog } from "@/features/dashboard/forecast-dialog";
 
-const icons = [DollarSign, Server, PiggyBank, Wallet] as const;
+const icons = [DollarSign, Server, PiggyBank, Wallet, TrendingUp] as const;
 
 export default function StatsGrid({ month }: { month: string }) {
   const dashboard = useAwsDashboard(month);
@@ -41,12 +44,22 @@ export default function StatsGrid({ month }: { month: string }) {
     retry: false,
   });
   const [isResourcesOpen, setIsResourcesOpen] = useState(false);
+  const [isBudgetOpen, setIsBudgetOpen] = useState(false);
+  const [isForecastOpen, setIsForecastOpen] = useState(false);
   const resources = useQuery({
     queryKey: ["aws-resources", accountId, connectionToken],
     queryFn: () => fetchAwsResources(connectionToken as string),
     enabled: isResourcesOpen && Boolean(connectionToken),
     retry: false,
   });
+  const budgets = useQuery({
+    queryKey: ["budgets", accountId, month],
+    queryFn: () => fetchBudgets(connectionToken as string, month),
+    enabled: Boolean(connectionToken),
+    retry: false,
+  });
+  const hasBudgets = Boolean(budgets.data?.length);
+  const budgetSummary = budgets.data ? summarizeBudgets(budgets.data) : null;
   const data = dashboard.data;
   const stats = [
     {
@@ -65,13 +78,19 @@ export default function StatsGrid({ month }: { month: string }) {
       title: "Estimated Savings",
       value: data?.estimatedSavings ? formatCurrency(data.estimatedSavings.value, data.estimatedSavings.currency) : data ? "Unavailable" : dashboard.isError ? "Unavailable" : "Loading...",
       change: "",
-      description: data?.estimatedSavings ? "Optimization opportunities" : "No recommendations available",
+      description: data?.estimatedSavings ? "Heuristic Estimate — Not Guaranteed" : "No savings quantified for this month",
     },
     {
       title: "Budget Usage",
-      value: data?.budgetUsage?.configured ? (data.budgetUsage.usagePercentage == null ? "Unavailable" : `${data.budgetUsage.usagePercentage}%`) : data ? "No budget configured" : dashboard.isError ? "Unavailable" : "Loading...",
-      change: data?.budgetUsage?.configured ? budgetStatus(data.budgetUsage.status) : "",
-      description: "Current monthly budget",
+      value: budgets.isLoading ? "Loading..." : budgets.isError ? "Unavailable" : hasBudgets ? (budgetSummary?.usagePercentage == null ? "Unavailable" : `${budgetSummary.usagePercentage.toFixed(1)}%`) : "No budget configured",
+      change: "",
+      description: hasBudgets ? `Current monthly budget · ${BUDGET_TONE_LABEL[worstBudgetTone(budgets.data as Budget[])]}` : "Current monthly budget",
+    },
+    {
+      title: "Total Forecasted Cost",
+      value: data?.forecast?.value == null ? (data ? "Unavailable" : dashboard.isError ? "Unavailable" : "Loading...") : formatForecastCurrency(data.forecast.value, data.forecast.currency),
+      change: data?.forecast?.percentageChange == null ? "" : formatChange(data.forecast.percentageChange),
+      description: forecastDescription(data?.forecast ?? null),
     },
   ];
 
@@ -88,26 +107,39 @@ export default function StatsGrid({ month }: { month: string }) {
         {liveCost.data?.status === "SUCCESS" && <div className="mt-3 text-sm"><p><strong>Live AWS cost:</strong> {formatCurrency(liveCost.data.cost ?? 0, liveCost.data.currency)}</p><p className="text-xs text-muted-foreground">{liveCost.data.billingPeriodStart} to {liveCost.data.billingPeriodEnd} · Fetched {new Date(liveCost.data.fetchedAt).toLocaleString()} · Data Source: AWS Cost Explorer</p><div className="mt-3 grid gap-4 border-t border-border pt-2 sm:grid-cols-2"><div className="space-y-1"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Service</p>{liveCost.data.services.map((item) => <div className="flex justify-between gap-3 text-xs" key={item.service}><span>{item.service}</span><span>{formatCurrency(item.cost, item.currency)}</span></div>)}</div><div className="space-y-1"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Region</p>{liveCost.data.regions.map((item) => <div className="flex justify-between gap-3 text-xs" key={item.region}><span>{item.region}</span><span>{formatCurrency(item.cost, item.currency)}</span></div>)}</div></div></div>}
         <p className="mt-2 text-xs text-warning">AWS Cost Explorer API usage may incur AWS charges.</p>
       </section>
-      <section className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4">
-      {stats.map((stat, index) => (
-        <StatCard
-          key={stat.title}
-          title={stat.title}
-          value={stat.value}
-          change={stat.change}
-          description={stat.description}
-          icon={icons[index]}
-          interactive={stat.title === "Active Resources"}
-          onClick={stat.title === "Active Resources" ? () => setIsResourcesOpen(true) : undefined}
-          onKeyDown={stat.title === "Active Resources" ? (event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              setIsResourcesOpen(true);
-            }
-          } : undefined}
-        />
-      ))}
+      <section className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      {stats.map((stat, index) => {
+        const resourcesInteractive = stat.title === "Active Resources";
+        const budgetInteractive = stat.title === "Budget Usage" && hasBudgets;
+        const forecastInteractive = stat.title === "Total Forecasted Cost" && Boolean(data?.forecast?.value);
+        const interactive = resourcesInteractive || budgetInteractive || forecastInteractive;
+        const open = () => {
+          if (resourcesInteractive) setIsResourcesOpen(true);
+          else if (budgetInteractive) setIsBudgetOpen(true);
+          else if (forecastInteractive) setIsForecastOpen(true);
+        };
+        return (
+          <StatCard
+            key={stat.title}
+            title={stat.title}
+            value={stat.value}
+            change={stat.change}
+            description={stat.description}
+            icon={icons[index]}
+            interactive={interactive}
+            onClick={interactive ? open : undefined}
+            onKeyDown={interactive ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                open();
+              }
+            } : undefined}
+          />
+        );
+      })}
       {isResourcesOpen && <ActiveResourcesDialog resources={resources} onClose={() => setIsResourcesOpen(false)} />}
+      {isBudgetOpen && <BudgetUsageDialog budgets={budgets.data} month={month} isLoading={budgets.isLoading} isError={budgets.isError} onClose={() => setIsBudgetOpen(false)} />}
+      {isForecastOpen && data?.forecast && <ForecastDialog forecast={data.forecast} onClose={() => setIsForecastOpen(false)} />}
       </section>
     </>
   );
@@ -123,7 +155,10 @@ function ActiveResourcesDialog({
   const data = resources.data;
   const activeEc2 = data?.ec2Instances.filter((item) => item.state?.toLowerCase() === "running") ?? [];
   const activeRds = data?.rdsDatabases.filter((item) => item.status?.toLowerCase() === "available") ?? [];
-  const activeLambda = data?.lambdaFunctions.filter((item) => item.state?.toLowerCase() === "active") ?? [];
+  const activeLambda = data?.lambdaFunctions.filter((item) => {
+    const state = item.state?.toLowerCase();
+    return state === "active" || state === "pending" || state === "updating" || !state;
+  }) ?? [];
   const activeEbs = data?.ebsVolumes.filter((item) => item.attachedInstanceId && item.state?.toLowerCase() === "in-use") ?? [];
   const activeVpcs = data?.vpcs.filter((item) => item.state?.toLowerCase() === "available") ?? [];
   const activeSecurityGroups = data?.securityGroups.filter((item) => Boolean(item.vpcId)) ?? [];
@@ -172,10 +207,26 @@ function formatCurrency(value: number, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 2 }).format(value);
 }
 
+function formatForecastCurrency(value: number, currency: string) {
+  const magnitude = Math.abs(value);
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: magnitude > 0 && magnitude < 1 ? 4 : 2,
+    maximumFractionDigits: magnitude > 0 && magnitude < 1 ? 4 : 2,
+  }).format(value);
+}
+
 function formatChange(value: number) {
   return `${value > 0 ? "+" : ""}${value}%`;
 }
 
-function budgetStatus(status: string) {
-  return status === "OVER_BUDGET" ? "Over Budget" : status === "NEAR_LIMIT" ? "Near Limit" : "Within Limit";
+function forecastDescription(forecast: { method: string; period: string; daysObserved: number; daysInMonth: number } | null) {
+  if (!forecast) return "No billing data for the selected month";
+  if (forecast.method === "RUN_RATE_PROJECTION") {
+    return `Projected from ${forecast.daysObserved} observed days of ${forecast.daysInMonth}`;
+  }
+  if (forecast.method === "PRIOR_MONTH_RUN_RATE") return "Projected from the previous month run rate";
+  if (forecast.method === "FINAL_ACTUAL") return `Final actual for ${forecast.period}`;
+  return FORECAST_METHOD_LABEL[forecast.method] ?? "Projected month cost";
 }
